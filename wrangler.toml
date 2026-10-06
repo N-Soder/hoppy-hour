@@ -1,0 +1,45 @@
+name = "hoppy-hour"
+compatibility_date = "2024-09-23"
+# Node built-in shims (node:path etc.) — required by the @anthropic-ai/sdk
+# import in the Snap-a-Deal extraction Function.
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "dist"
+
+# ─── Bindings ───────────────────────────────────────────────────────────────
+# Applies to local dev AND production (and, if enabled, preview) deployments.
+#
+# No separate [env.preview] block for now: preview deployments — if you have
+# them enabled — share these same resources. Verification is done via local
+# `wrangler pages dev`. To isolate previews later, create a hoppy-hour-db-preview
+# D1 + a second KV namespace and add an [env.preview] block pointing at them.
+[[d1_databases]]
+binding = "DB"
+database_name = "hoppy-hour-db"
+database_id = "326075ab-7bf2-4741-b3f3-073a8f39567b"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "8c0344a00ac84a89ad3f152e51fd0531"
+
+# Compressed photos from admin Snap-a-Deal submissions (~150-300KB each after
+# client-side compression). Create the bucket once before deploying:
+#   npx wrangler r2 bucket create hoppy-hour-submission-images
+# Local dev (`wrangler pages dev`) simulates the bucket automatically.
+[[r2_buckets]]
+binding = "SUBMISSION_IMAGES"
+bucket_name = "hoppy-hour-submission-images"
+
+# ─── Non-secret environment variables ───────────────────────────────────────
+# Once wrangler.toml manages a Pages project, plaintext env vars live HERE (the
+# dashboard only manages encrypted Secrets — MAPBOX_ACCESS_TOKEN, TURNSTILE_SECRET_KEY,
+# ANTHROPIC_API_KEY for the Snap-a-Deal vision extraction).
+# None of these are sensitive: a team domain, an Access audience tag, a country
+# code, and the PUBLIC Turnstile site key (designed to ship in the client bundle).
+[vars]
+ACCESS_TEAM_DOMAIN = "soderholm.cloudflareaccess.com"
+ACCESS_AUD = "9292f8c6ebaf464705d47161adaf1497143afdbbc53b39b156293ccab6b22d25"
+# Fallback only: /api/geocode uses this when the client doesn't send its own
+# ?country= (e.g. the submit form's country picker sends the one the user
+# selected, which always wins — see functions/api/geocode.ts).
+GEOCODE_COUNTRY = "AU"
+VITE_TURNSTILE_SITE_KEY = "0x4AAAAAAD2ZhGDeYRdfYxJw"

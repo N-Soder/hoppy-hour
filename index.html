@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="/favicon.ico" type="image/x-icon" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="HoppyHour" />
+    <title>HoppyHour – Find Local Hoppy Hour Deals</title>
+
+    <!-- Apply the saved (or system) theme before first paint to avoid a
+         light-mode flash for dark-mode users. Key matches next-themes' default. -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("theme");
+          var dark =
+            t === "dark" ||
+            ((!t || t === "system") &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
+        } catch (e) {}
+      })();
+    </script>
+
+    <!-- Cloudflare Turnstile (bot check on the submit form) -->
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" defer></script>
+
+    <!-- SEO -->
+    <meta name="description" content="Discover the best hoppy hour deals near you. Find bars and restaurants with live happy hour specials on an interactive map." />
+    <meta name="author" content="HoppyHour" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="HoppyHour – Find Local Hoppy Hour Deals" />
+    <meta property="og:description" content="Discover the best hoppy hour deals near you. Find bars and restaurants with live happy hour specials on an interactive map." />
+    <meta property="og:image" content="https://hoppyhour.soderholm.app/og-image.png" />
+    <meta property="og:url" content="https://hoppyhour.soderholm.app/" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@HoppyHour" />
+    <meta name="twitter:title" content="HoppyHour – Find Local Hoppy Hour Deals" />
+    <meta name="twitter:description" content="Discover the best hoppy hour deals near you. Find bars and restaurants with live happy hour specials on an interactive map." />
+    <meta name="twitter:image" content="https://hoppyhour.soderholm.app/og-image.png" />
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

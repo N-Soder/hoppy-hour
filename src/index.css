@@ -1,0 +1,115 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  /* "Copper Standard" palette — warm cream ground, deep copper primary.
+     Light primary #B35C0C, dark primary #EB9333. */
+  :root {
+    --background: 40 45% 95%;
+    --foreground: 33 34% 13%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 33 34% 13%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 33 34% 13%;
+
+    --primary: 29 87% 37%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 40 35% 91%;
+    --secondary-foreground: 33 30% 18%;
+
+    --muted: 40 32% 90%;
+    --muted-foreground: 35 14% 46%;
+
+    --accent: 29 65% 92%;
+    --accent-foreground: 29 87% 28%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 39 34% 85%;
+    --input: 39 34% 85%;
+    --ring: 29 87% 37%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 40 40% 94%;
+    --sidebar-foreground: 33 15% 30%;
+    --sidebar-primary: 29 87% 37%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 40 35% 91%;
+    --sidebar-accent-foreground: 33 30% 18%;
+    --sidebar-border: 39 34% 85%;
+    --sidebar-ring: 29 87% 37%;
+
+    --happy: 142 60% 40%;
+    --happy-foreground: 0 0% 100%;
+  }
+
+  .dark {
+    --background: 17 18% 8%;
+    --foreground: 34 43% 90%;
+
+    --card: 25 21% 11%;
+    --card-foreground: 34 43% 90%;
+
+    --popover: 25 21% 11%;
+    --popover-foreground: 34 43% 90%;
+
+    --primary: 31 82% 56%;
+    --primary-foreground: 24 76% 8%;
+
+    --secondary: 25 20% 16%;
+    --secondary-foreground: 34 30% 85%;
+
+    --muted: 28 22% 14%;
+    --muted-foreground: 33 14% 56%;
+
+    --accent: 29 45% 20%;
+    --accent-foreground: 31 82% 70%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 30 24% 16%;
+    --input: 30 24% 16%;
+    --ring: 31 82% 56%;
+
+    --sidebar-background: 20 18% 9%;
+    --sidebar-foreground: 34 30% 85%;
+    --sidebar-primary: 31 82% 56%;
+    --sidebar-primary-foreground: 24 76% 8%;
+    --sidebar-accent: 25 20% 16%;
+    --sidebar-accent-foreground: 34 30% 85%;
+    --sidebar-border: 30 24% 16%;
+    --sidebar-ring: 31 82% 56%;
+
+    --happy: 142 60% 45%;
+    --happy-foreground: 0 0% 100%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Touch devices zoom by pinching and rotate with two fingers, so the
+   zoom/compass stack only adds clutter along the map's top edge. */
+@media (pointer: coarse) {
+  .mapboxgl-ctrl-top-right {
+    display: none;
+  }
+}
