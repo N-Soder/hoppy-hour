@@ -39,6 +39,11 @@ export default defineConfig({
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg}"],
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024, // 3 MiB — main bundle is ~2.5 MiB
+        // Navigations the service worker must NOT answer with the cached app
+        // shell: Cloudflare Access's own endpoints (login callback, logout),
+        // /admin (so the edge can check the Access session before the page
+        // loads), and /api.
+        navigateFallbackDenylist: [/^\/cdn-cgi\//, /^\/admin(\/|$)/, /^\/api\//],
         runtimeCaching: [
           {
             // Venue data and the map token: serve cached while fetching fresh.
