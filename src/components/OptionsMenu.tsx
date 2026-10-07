@@ -1,7 +1,8 @@
 import { Link } from "react-router-dom";
 import { useTheme } from "next-themes";
-import { Moon, Sun, Monitor, Shield, Plus, Settings } from "lucide-react";
+import { Moon, Sun, Monitor, Shield, Plus, Settings, Github, ArrowUpRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { REPO_URL } from "@/lib/constants";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,7 +16,7 @@ import {
 
 /**
  * Header options menu: theme switcher plus secondary navigation (submit /
- * admin) so the top bar stays uncluttered on mobile.
+ * admin) and the source link, so the top bar stays uncluttered on mobile.
  */
 export default function OptionsMenu() {
   const { theme, setTheme } = useTheme();
@@ -59,6 +60,16 @@ export default function OptionsMenu() {
           <Link to="/admin" className="gap-2">
             <Shield className="h-4 w-4" /> Admin
           </Link>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-xs text-muted-foreground">
+          Open source · MIT
+        </DropdownMenuLabel>
+        <DropdownMenuItem asChild>
+          <a href={REPO_URL} target="_blank" rel="noopener noreferrer" className="gap-2">
+            <Github className="h-4 w-4" /> Source code
+            <ArrowUpRight className="ml-auto h-3 w-3 text-muted-foreground" />
+          </a>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
