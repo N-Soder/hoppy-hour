@@ -1,5 +1,8 @@
 export { VALID_TAGS, type ValidTag } from "./tags";
 
+// Public source repository, linked from the options menu.
+export const REPO_URL = "https://github.com/N-Soder/hoppy-hour";
+
 export const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 export const DAYS_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
 
