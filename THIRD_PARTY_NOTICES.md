@@ -32,12 +32,8 @@ Notable exception:
 
 ## Images
 
-These files are **not** covered by this repository's MIT License:
+This file is **not** covered by this repository's MIT License:
 
-- The app icons (`public/favicon.ico`, `public/apple-touch-icon.png`,
-  `public/pwa-192.png`, `public/pwa-512.png`) use the "clinking beer mugs"
-  image from [Noto Emoji](https://github.com/googlefonts/noto-emoji)
-  (© Google, Apache License 2.0).
 - `public/og-image.png` is a photo from [Pexels](https://www.pexels.com), used
   under the [Pexels License](https://www.pexels.com/license/).
 
