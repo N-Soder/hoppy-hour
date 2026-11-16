@@ -6,7 +6,7 @@
 import type { Env } from "../../../_shared/db";
 import { nowIso, toHms } from "../../../_shared/db";
 import { error, json, readJson } from "../../../_shared/http";
-import { normalizeTags, validateDealFields } from "../../../_shared/validate";
+import { MAX_BATCH_ITEMS, normalizeTags, validateDealFields, validateIdList } from "../../../_shared/validate";
 
 interface Record_ {
   venue_id: string;
@@ -25,10 +25,14 @@ interface Body {
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const b = await readJson<Body>(request);
-  if (!b || !Array.isArray(b.ids) || !Array.isArray(b.records) || b.records.length === 0) {
+  if (!b || !Array.isArray(b.records) || b.records.length === 0) {
     return error("ids and records required", 400);
   }
+  const idsErr = validateIdList(b.ids);
+  if (idsErr) return error(idsErr, 400);
+  if (b.records.length > MAX_BATCH_ITEMS) return error(`too many records (max ${MAX_BATCH_ITEMS})`, 400);
   for (const r of b.records) {
+    if (!r || typeof r !== "object") return error("record must be an object", 400);
     if (typeof r.venue_id !== "string" || !r.venue_id) return error("record.venue_id required", 400);
     const fieldErr = validateDealFields(r);
     if (fieldErr) return error(fieldErr, 400);

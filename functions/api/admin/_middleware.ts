@@ -29,13 +29,16 @@ export function isCrossSiteWrite(request: Request): boolean {
 }
 
 export const onRequest: PagesFunction<Env> = async (ctx) => {
+  // CSRF check runs before the dev bypass: the bypass has no session at all,
+  // so without this any page a developer visits could write to local data
+  // (and spend the .dev.vars Anthropic key via from-image).
+  if (isCrossSiteWrite(ctx.request)) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
   if (ctx.env.DEV_BYPASS_ACCESS === "1" && LOOPBACK_HOSTS.has(new URL(ctx.request.url).hostname)) {
     ctx.data.adminEmail = "dev@localhost";
     return ctx.next();
-  }
-
-  if (isCrossSiteWrite(ctx.request)) {
-    return new Response("Forbidden", { status: 403 });
   }
 
   const token = ctx.request.headers.get("Cf-Access-Jwt-Assertion");
