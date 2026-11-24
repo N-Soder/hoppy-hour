@@ -5,7 +5,7 @@
 import type { Env } from "../../../_shared/db";
 import { nowIso, rowToVenue } from "../../../_shared/db";
 import { error, json, readJson } from "../../../_shared/http";
-import { isStringLen } from "../../../_shared/validate";
+import { validateVenue } from "../../../_shared/validate";
 import { withOptionalColumns } from "../../../_shared/schema-compat";
 import { timezoneFor } from "../../../_shared/timezone";
 import type { Venue } from "../../../../src/lib/api-types";
@@ -45,8 +45,8 @@ interface VenueBody {
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const b = await readJson<VenueBody>(request);
   if (!b) return error("invalid JSON", 400);
-  if (!isStringLen(b.name, 200)) return error("name is required (max 200)", 400);
-  if (!isStringLen(b.address, 500)) return error("address is required (max 500)", 400);
+  const venueErr = validateVenue(b, { requireCoords: false });
+  if (venueErr) return error(venueErr, 400);
 
   const id = crypto.randomUUID();
   const now = nowIso();
@@ -58,7 +58,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
                            ${present.has("timezone") ? ", timezone" : ""})
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7, ?7 ${present.has("timezone") ? ", ?8" : ""})`,
     ).bind(
-      id, b.name, b.address, b.country ?? null, b.lat ?? null, b.lng ?? null, now,
+      id, b.name, b.address, b.country?.toUpperCase() ?? null, b.lat ?? null, b.lng ?? null, now,
       ...(present.has("timezone") ? [timezone] : []),
     ).run(),
   );

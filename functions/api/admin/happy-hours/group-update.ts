@@ -11,7 +11,7 @@
 import type { Env } from "../../../_shared/db";
 import { nowIso, toHms } from "../../../_shared/db";
 import { error, json, readJson } from "../../../_shared/http";
-import { normalizeTags, validateDealFields } from "../../../_shared/validate";
+import { normalizeTags, validateDealFields, validateIdList } from "../../../_shared/validate";
 import { loadGroup } from "../../../_shared/deal-group";
 
 interface Body {
@@ -28,9 +28,12 @@ interface Body {
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const b = await readJson<Body>(request);
-  if (!b || !Array.isArray(b.ids) || b.ids.length === 0) return error("ids required", 400);
+  if (!b) return error("invalid JSON", 400);
+  const idsErr = validateIdList(b.ids);
+  if (idsErr) return error(idsErr, 400);
   const f = b.fields;
-  const fieldErr = validateDealFields(f ?? {});
+  if (!f || typeof f !== "object") return error("fields required", 400);
+  const fieldErr = validateDealFields(f);
   if (fieldErr) return error(fieldErr, 400);
 
   const group = await loadGroup(env, b.ids);
