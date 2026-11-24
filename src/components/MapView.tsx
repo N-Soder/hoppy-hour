@@ -198,8 +198,9 @@ export default function MapView({
           const at = clustersRef.current.get(id)?.marker.getLngLat();
           source?.getClusterExpansionZoom(id, (err, zoom) => {
             if (err || zoom == null || !at) return;
-            // Tagged so the move counts as the user's (see moveend below).
-            map.easeTo({ center: at, zoom: zoom + 0.25, duration: panDuration() }, { userInitiated: true });
+            // A programmatic move: it carries no originalEvent, so it does not
+            // offer "Search this area" (see moveend below).
+            map.easeTo({ center: at, zoom: zoom + 0.25, duration: panDuration() });
           });
         });
         const pip = document.createElement("span");
@@ -355,13 +356,11 @@ export default function MapView({
     map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
     // Only moves the user made count for "Search this area". Gesture and
     // control moves carry the DOM event as `originalEvent` (inertia too);
-    // flyTo/easeTo/panBy from code carry none. A user gesture can interrupt a
-    // programmatic move, so remember it for the rest of that move.
+    // flyTo/easeTo/panBy from code (including the cluster-tap zoom) carry
+    // none. A user gesture can interrupt a programmatic move, so remember it
+    // for the rest of that move.
     let userMove = false;
-    const fromUser = (e: object) => {
-      const ev = e as { originalEvent?: unknown; userInitiated?: boolean };
-      return Boolean(ev.originalEvent || ev.userInitiated);
-    };
+    const fromUser = (e: object) => Boolean((e as { originalEvent?: unknown }).originalEvent);
     map.on("movestart", (e) => { userMove = fromUser(e); });
     for (const type of ["dragstart", "zoomstart", "rotatestart", "pitchstart"] as const) {
       map.on(type, (e) => { if (fromUser(e)) userMove = true; });
