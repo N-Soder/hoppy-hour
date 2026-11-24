@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { parseHomeParams, serializeHomeParams, type HomeUrlState } from "@/lib/url-state";
+import { parseHomeParams, serializeHomeParams, toQueryString, type HomeUrlState } from "@/lib/url-state";
 
 /** History state on the entry pushed when a venue opens. */
 interface VenueEntryState {
@@ -36,7 +36,7 @@ export function useHomeUrlState() {
 
   const update = useCallback(
     (patch: Partial<HomeUrlState>) => {
-      setParams((prev) => serializeHomeParams({ ...parseHomeParams(prev), ...patch }, prev), {
+      setParams((prev) => toQueryString(serializeHomeParams({ ...parseHomeParams(prev), ...patch }, prev)), {
         replace: true,
         state: locationStateRef.current,
       });
@@ -49,7 +49,7 @@ export function useHomeUrlState() {
       setParams(
         (prev) => {
           const cur = parseHomeParams(prev);
-          return serializeHomeParams({ ...cur, venue: id }, prev);
+          return toQueryString(serializeHomeParams({ ...cur, venue: id }, prev));
         },
         isVenueEntry(locationStateRef.current) || params.get("venue")
           ? // Already showing a venue: swap it, so one Back still closes.
@@ -66,7 +66,7 @@ export function useHomeUrlState() {
       navigate(-1);
       return;
     }
-    setParams((prev) => serializeHomeParams({ ...parseHomeParams(prev), venue: null }, prev), {
+    setParams((prev) => toQueryString(serializeHomeParams({ ...parseHomeParams(prev), venue: null }, prev)), {
       replace: true,
       state: null,
     });

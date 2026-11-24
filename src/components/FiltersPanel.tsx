@@ -46,7 +46,7 @@ function isTomorrow(d: Date): boolean {
 
 // Pills are 40px tall; the Button primitive's touch-target grows the hit area
 // to 44px on touch screens.
-const triggerClass = "h-10 flex-shrink-0 gap-1.5 rounded-full bg-card px-3.5";
+const triggerClass = "h-10 flex-shrink-0 gap-1.5 rounded-full bg-card px-2.5 md:px-3.5";
 // Rows that scroll sideways on phones: bleed to the screen edges, keep room
 // above and below for the 44px hit areas (overflow-x clips them otherwise).
 const scrollRowClass =
@@ -73,6 +73,8 @@ export default function FiltersPanel({
 
   const displayTime = formatClock(time);
   const dateLabel = isToday(date) ? "Today" : isTomorrow(date) ? "Tomorrow" : format(date, "EEE d MMM");
+  // Phones: "Sat 28" keeps the when/where row on one line with "Now" showing.
+  const shortDateLabel = isToday(date) || isTomorrow(date) ? dateLabel : format(date, "EEE d");
 
   const toggleTag = (tag: string) => {
     onTagsChange(
@@ -153,7 +155,7 @@ export default function FiltersPanel({
       </div>
 
       {/* When and where: one row, never wraps (scrolls sideways if it must). */}
-      <div className={cn(scrollRowClass, "gap-2 py-0.5 -my-0.5")} role="group" aria-label="When and how far">
+      <div className={cn(scrollRowClass, "gap-1.5 py-0.5 -my-0.5 md:gap-2")} role="group" aria-label="When and how far">
         <Popover>
           <PopoverTrigger asChild>
             <Button
@@ -163,7 +165,14 @@ export default function FiltersPanel({
               aria-label={`Date: ${isToday(date) ? "today" : format(date, "EEEE d MMMM")}`}
             >
               <CalendarIcon className="h-4 w-4" aria-hidden="true" />
-              {dateLabel}
+              {shortDateLabel === dateLabel ? (
+                dateLabel
+              ) : (
+                <>
+                  <span className="md:hidden">{shortDateLabel}</span>
+                  <span className="hidden md:inline">{dateLabel}</span>
+                </>
+              )}
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-auto p-0" align="start">
@@ -224,7 +233,7 @@ export default function FiltersPanel({
           <Button
             variant="ghost"
             size="sm"
-            className="h-10 flex-shrink-0 gap-1.5 rounded-full px-3 text-primary"
+            className="h-10 flex-shrink-0 gap-1 rounded-full px-2.5 text-primary"
             onClick={onResetToNow}
             aria-label="Back to now"
           >

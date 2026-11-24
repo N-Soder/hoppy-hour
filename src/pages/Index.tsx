@@ -385,7 +385,9 @@ export default function Index() {
   const scrollListToTop = useCallback(() => {
     listScrollRef.current?.scrollTo({ top: 0, behavior: scrollBehavior() });
     expandHeader();
-    requestAnimationFrame(() => document.getElementById("venue-search")?.focus({ preventScroll: true }));
+    // Keep keyboard focus somewhere sensible (the strip button disappears)
+    // without focusing the search field, which would raise the phone keyboard.
+    requestAnimationFrame(() => document.querySelector<HTMLElement>("[data-venue-card]")?.focus({ preventScroll: true }));
   }, [expandHeader]);
 
   const headerCollapsed = isMobile && headerOffset > 10;
@@ -578,7 +580,7 @@ export default function Index() {
             <h2 id="venues-heading" className="sr-only">Venues</h2>
             <div
               ref={listScrollRef as React.RefObject<HTMLDivElement>}
-              className={cn("min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-3", isMobile && "pb-28", desktopDetail && "hidden")}
+              className={cn("min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-3", isMobile && "pt-2 pb-28", desktopDetail && "hidden")}
               onScroll={handleListScroll}
             >
               {listState === "loading" ? (

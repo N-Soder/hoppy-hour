@@ -37,7 +37,9 @@ export function VenueStatusLine({
           <span className="text-muted-foreground">Next:</span> {status.nextLabel}
         </span>
       ) : (
-        <span className="text-muted-foreground">No deal on {selection.phrase}</span>
+        <span className="text-muted-foreground">
+          {status.dealCount > 0 ? "No deal matches your filters" : "No deals listed"}
+        </span>
       )}
       {!status.isLive && status.dealCount > 0 && (
         <span className="ml-auto flex-shrink-0 whitespace-nowrap text-muted-foreground">

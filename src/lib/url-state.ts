@@ -114,3 +114,8 @@ export function countActiveFilters(state: HomeUrlState): number {
     (state.q.trim() ? 1 : 0)
   );
 }
+
+/** Query string with ":" and "," left readable (?time=17:30&tags=beer,wine). */
+export function toQueryString(params: URLSearchParams): string {
+  return params.toString().replace(/%3A/gi, ":").replace(/%2C/gi, ",");
+}

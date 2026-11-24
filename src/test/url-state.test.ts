@@ -6,6 +6,7 @@ import {
   parseHomeParams,
   serializeHomeParams,
   toDateParam,
+  toQueryString,
 } from "@/lib/url-state";
 
 const parse = (qs: string) => parseHomeParams(new URLSearchParams(qs));
@@ -68,5 +69,13 @@ describe("countActiveFilters", () => {
     expect(
       countActiveFilters({ ...DEFAULT_URL_STATE, date: "2026-11-28", time: "17:00", radius: 1000, tags: ["beer", "wine"], q: "x" }),
     ).toBe(5);
+  });
+});
+
+describe("toQueryString", () => {
+  it("keeps times and tag lists readable and still parseable", () => {
+    const qs = toQueryString(serializeHomeParams({ ...DEFAULT_URL_STATE, time: "17:30", tags: ["beer", "wine"], q: "a&b" }));
+    expect(qs).toBe("time=17:30&tags=beer,wine&q=a%26b");
+    expect(parseHomeParams(new URLSearchParams(qs))).toMatchObject({ time: "17:30", tags: ["beer", "wine"], q: "a&b" });
   });
 });
