@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api, isAuthError } from "@/lib/api";
+import { useDocumentTitle } from "@/hooks/use-document-title";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,6 +15,7 @@ import PhotoSubmit from "@/components/admin/PhotoSubmit";
 // page means you're authenticated. The probe below confirms admin state to the
 // SPA and detects a session that expired mid-use.
 export default function Admin() {
+  useDocumentTitle("Admin");
   const [tab, setTab] = useState("submissions");
   const { data: me, isLoading, isError, error } = useQuery({
     queryKey: ["admin-me"],
@@ -66,7 +68,7 @@ export default function Admin() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="flex items-center justify-between gap-2 px-3 sm:px-6 py-3 border-b border-border bg-card">
+      <header className="flex items-center justify-between gap-2 px-3 sm:px-6 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))] border-b border-border bg-card">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" asChild>
             <Link to="/" aria-label="Back to the map"><ArrowLeft className="h-4 w-4" aria-hidden="true" /></Link>

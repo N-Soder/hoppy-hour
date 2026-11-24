@@ -115,6 +115,11 @@ All colors MUST be HSL.
 
   body {
     @apply bg-background text-foreground;
+    /* viewport-fit=cover (index.html): keep content clear of the notch when a
+       phone is in landscape. Top and bottom insets are handled where they
+       matter (headers, the + button, the venue sheet). */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
   }
 }
 

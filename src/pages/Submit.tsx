@@ -14,12 +14,16 @@ import {
   Trash2,
   History,
   RefreshCw,
+  WifiOff,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Chip } from "@/components/ui/chip";
 import SiteHeader from "@/components/SiteHeader";
+import { ConnectionNotice } from "@/components/ConnectionNotice";
+import { useDocumentTitle } from "@/hooks/use-document-title";
+import { useOnlineStatus } from "@/hooks/use-online-status";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import {
@@ -105,6 +109,10 @@ const CHECK_TIMEOUT_MS = 30000;
 
 const CHECK_FAILED_MESSAGE =
   "We couldn't run the security check. Your deals are safe — give it another go.";
+const OFFLINE_MESSAGE =
+  "You're offline, so nothing was sent. Your deals are safe — send them when you're back online.";
+const UNREACHABLE_MESSAGE =
+  "We couldn't reach HoppyHour. Your deals are safe — check your connection and try again.";
 
 // start_time/end_time are 'HH:MM' clock strings produced by the deal-hours
 // picker. They are required (min length 1) so an untouched picker fails
@@ -197,6 +205,8 @@ function focusField(anchor: string) {
 }
 
 export default function Submit() {
+  useDocumentTitle("Submit a deal");
+  const isOnline = useOnlineStatus();
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   // Server/network failure shown inline next to the submit button (in addition
@@ -610,6 +620,16 @@ export default function Submit() {
     };
   }, []);
 
+  // Losing the connection mid-check: fail it now rather than after the
+  // check's timeout, so the offline message replaces the spinner at once.
+  useEffect(() => {
+    if (!isOnline) pendingCheck.current?.reject();
+  }, [isOnline]);
+  // Back online: the "you're offline" explanation no longer applies.
+  useEffect(() => {
+    if (isOnline) setServerError((e) => (e === OFFLINE_MESSAGE ? null : e));
+  }, [isOnline]);
+
   /** Mint a fresh Turnstile token, or throw so the caller can offer a retry. */
   const requestTurnstileToken = async (): Promise<string> => {
     if (!TURNSTILE_SITE_KEY) return "";
@@ -671,6 +691,13 @@ export default function Submit() {
     setServerError(null);
     setCanRetry(false);
 
+    // Offline: the button is disabled, but Enter in a field can still get
+    // here. Say why nothing was sent; the draft is already saved.
+    if (!navigator.onLine) {
+      setServerError(OFFLINE_MESSAGE);
+      return;
+    }
+
     // Bot check runs here, not on page load, so a token is never stale and a
     // failure is recoverable without losing the form.
     let token = "";
@@ -679,6 +706,10 @@ export default function Submit() {
       try {
         token = await requestTurnstileToken();
       } catch {
+        if (!navigator.onLine) {
+          setServerError(OFFLINE_MESSAGE);
+          return;
+        }
         setServerError(CHECK_FAILED_MESSAGE);
         setCanRetry(true);
         toast({
@@ -720,7 +751,11 @@ export default function Submit() {
       setSubmitted(true);
     } catch (err) {
       const status = err instanceof ApiError ? err.status : 0;
-      if (status === 429) {
+      if (status === 0) {
+        // Never reached the server: the connection dropped or is down.
+        setServerError(navigator.onLine ? UNREACHABLE_MESSAGE : OFFLINE_MESSAGE);
+        setCanRetry(navigator.onLine);
+      } else if (status === 429) {
         const msg = "Too many submissions — please wait a minute and try again.";
         setServerError(msg);
         setCanRetry(true);
@@ -834,6 +869,10 @@ export default function Submit() {
             </CardDescription>
           </CardHeader>
           <CardContent>
+            <ConnectionNotice
+              className="mb-6"
+              detail="You can keep filling this in and nothing is lost; sending needs a connection, and the button comes back as soon as you're online."
+            />
             {/* Draft from a previous visit — offered, never applied on its own. */}
             {draftOffer && (
               <Alert className="mb-6">
@@ -1228,7 +1267,7 @@ export default function Submit() {
                           size="sm"
                           className="mt-3 flex gap-1.5"
                           onClick={retrySubmit}
-                          disabled={checking || submitting}
+                          disabled={checking || submitting || !isOnline}
                         >
                           <RefreshCw className="h-3.5 w-3.5" />
                           Try again
@@ -1263,15 +1302,19 @@ export default function Submit() {
                 ) : null}
 
                 {/* Never gated on the bot check: the button is what runs it, so
-                    there is always a control to press. */}
+                    there is always a control to press. Offline it waits for the
+                    connection (and comes back by itself) rather than letting
+                    the check time out. */}
                 <Button
                   type="submit"
                   size="lg"
                   className="w-full gap-2"
-                  disabled={submitting || checking}
+                  disabled={submitting || checking || !isOnline}
                 >
-                  <Send className="h-4 w-4" />
-                  {checking
+                  {isOnline ? <Send className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
+                  {!isOnline
+                    ? "Waiting for a connection to send"
+                    : checking
                     ? "Checking you're human…"
                     : submitting
                       ? "Submitting…"

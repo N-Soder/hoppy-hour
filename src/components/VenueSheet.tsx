@@ -117,7 +117,9 @@ export default function VenueSheet({
         aria-labelledby={HEADING_ID}
         data-venue-sheet=""
         className={cn(
-          "fixed inset-x-0 bottom-0 z-50 flex flex-col rounded-t-2xl border border-b-0 bg-background shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.25)]",
+          // Centred and capped in width, so a phone in landscape keeps the
+          // map visible either side and the sheet clear of the notch.
+          "fixed inset-x-0 bottom-0 z-50 mx-auto flex max-w-xl flex-col rounded-t-2xl border border-b-0 bg-background shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.25)]",
           "pb-[env(safe-area-inset-bottom)] animate-in slide-in-from-bottom-4 duration-200",
           expanded ? "max-h-[calc(100dvh-3rem)]" : "max-h-[60dvh]",
         )}

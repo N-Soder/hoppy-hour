@@ -48,17 +48,36 @@ export default defineConfig({
     VitePWA({
       registerType: "autoUpdate",
       manifest: {
+        id: "/",
         name: "HoppyHour",
         short_name: "HoppyHour",
         description: "Find happy hour deals near you.",
-        theme_color: "#B35C0C",
+        lang: "en",
+        categories: ["food", "lifestyle", "travel"],
+        // Light-theme surfaces: theme_color is the app header (--card),
+        // background_color the page (--background), so the title bar and the
+        // splash match the app. The page's theme-color metas (index.html,
+        // src/lib/theme-color.ts) take over for dark mode once it loads.
+        theme_color: "#ffffff",
         background_color: "#F8F4EC",
         display: "standalone",
+        scope: "/",
         start_url: "/",
         icons: [
-          { src: "/pwa-192.png", sizes: "192x192", type: "image/png" },
-          { src: "/pwa-512.png", sizes: "512x512", type: "image/png" },
-          { src: "/pwa-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" },
+          { src: "/pwa-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+          { src: "/pwa-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+          // Full-bleed, glyph inside the central safe zone (scripts/gen-icons.mjs).
+          { src: "/pwa-maskable-192.png", sizes: "192x192", type: "image/png", purpose: "maskable" },
+          { src: "/pwa-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+        ],
+        shortcuts: [
+          {
+            name: "Submit a deal",
+            short_name: "Submit",
+            description: "Tell us about a happy hour deal",
+            url: "/submit",
+            icons: [{ src: "/pwa-192.png", sizes: "192x192", type: "image/png" }],
+          },
         ],
       },
       workbox: {

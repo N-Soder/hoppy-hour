@@ -3,9 +3,14 @@ import { useEffect } from "react";
 import { MapPinOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import SiteHeader from "@/components/SiteHeader";
+import { useDocumentTitle, useNoIndex } from "@/hooks/use-document-title";
 
 const NotFound = () => {
   const location = useLocation();
+  useDocumentTitle("Page not found");
+  // Every path is answered with the app shell (status 200), so tell crawlers
+  // this one isn't a page.
+  useNoIndex();
 
   useEffect(() => {
     console.error("404 Error: User attempted to access non-existent route:", location.pathname);
