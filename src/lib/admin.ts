@@ -74,7 +74,7 @@ export function readableError(err: unknown): string {
   if (err.status === 0) return msg; // network: api.ts already wrote a sentence
   if (err.status === 429) return "Too many requests. Wait a minute, then try again.";
   if (err.status >= 500 || /^internal server error$/i.test(msg) || !msg) {
-    return `The server couldn't finish that (error ${err.status}). Nothing was changed on your side; try again, and if it keeps failing check the Functions logs.`;
+    return `The server hit an error (${err.status}). Try again; if it keeps happening, check the Cloudflare Functions logs.`;
   }
   if (err.status === 409) {
     if (/not pending|already (approved|rejected|processed)/i.test(msg)) {

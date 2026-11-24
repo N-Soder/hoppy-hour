@@ -22,8 +22,8 @@ describe("readableError", () => {
   it("never shows a raw status text", () => {
     const msg = readableError(new ApiError(500, "Internal Server Error"));
     expect(msg).not.toMatch(/Internal Server Error/);
-    expect(msg).toMatch(/couldn't finish that \(error 500\)/);
-    expect(readableError(new ApiError(502, ""))).toMatch(/error 502/);
+    expect(msg).toMatch(/server hit an error \(500\)/);
+    expect(readableError(new ApiError(502, ""))).toMatch(/\(502\)/);
   });
 
   it("explains auth, rate limits and already-handled submissions", () => {

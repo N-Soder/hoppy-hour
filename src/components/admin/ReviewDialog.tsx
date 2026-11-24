@@ -489,7 +489,9 @@ export default function ReviewDialog({ submission: sub, onClose, onReject, focus
               )}
               {!pinInfo.exact && (
                 <p className="basis-full text-xs text-muted-foreground">
-                  The pin will sit at the centre of the city, not at the venue.{" "}
+                  {pin.source === "upload"
+                    ? "This is where the photo was uploaded from, or the picked city's centre. Check it on the map."
+                    : "The pin will sit at the centre of the city, not at the venue."}{" "}
                   {address.trim()
                     ? "Look up the street address, or enter the venue's coordinates, to place it exactly."
                     : "Add a street address and look it up, or enter the venue's coordinates, to place it exactly."}
