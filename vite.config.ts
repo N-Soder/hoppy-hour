@@ -25,7 +25,7 @@ export default defineConfig({
       manifest: {
         name: "HoppyHour",
         short_name: "HoppyHour",
-        description: "Discover the best hoppy hour deals near you.",
+        description: "Find happy hour deals near you.",
         theme_color: "#B35C0C",
         background_color: "#F8F4EC",
         display: "standalone",

@@ -1,4 +1,4 @@
-// Crash-proof draft for the "Submit a Hoppy Hour" form.
+// Crash-proof draft for the "Submit a deal" form.
 //
 // The form can hold a lot of typing — a venue, a location, and up to
 // MAX_DEALS_PER_SUBMISSION deals — and none of it used to survive a reload. A

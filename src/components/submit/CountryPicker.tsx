@@ -43,12 +43,19 @@ export function CountryPicker({ value, onChange, id }: CountryPickerProps) {
           ) : (
             <span className="text-muted-foreground">Select country</span>
           )}
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
         <Command>
-          <CommandInput placeholder="Search country…" />
+          <CommandInput
+            placeholder="Search country…"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="words"
+            spellCheck={false}
+            aria-label="Country"
+          />
           <CommandList>
             <CommandEmpty>No country found.</CommandEmpty>
             <CommandGroup>
