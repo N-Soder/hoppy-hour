@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Pencil, Plus, Scissors, Trash2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
@@ -48,11 +48,34 @@ function dealName(g: Pick<GroupedHappyHour, "description" | "days_of_week" | "st
   return `“${desc}” (${dealSummary(g)})`;
 }
 
-export default function HappyHourManager({ venueId, venueName }: { venueId: string; venueName: string }) {
+/** The edit form for an existing deal, optionally on other days. */
+function formFromGroup(group: GroupedHappyHour, days = group.days_of_week): HHForm {
+  return {
+    days_of_week: [...days].sort((a, b) => a - b),
+    start_time: group.start_time.slice(0, 5),
+    end_time: group.end_time.slice(0, 5),
+    description: group.description,
+    tags: (group.tags ?? []).filter((t) => (VALID_TAGS as readonly string[]).includes(t)),
+    is_active: group.is_active,
+  };
+}
+
+export default function HappyHourManager({
+  venueId,
+  venueName,
+  onDirtyChange,
+}: {
+  venueId: string;
+  venueName: string;
+  /** Told whether a deal form has unsaved changes, so the venue dialog can ask before closing. */
+  onDirtyChange?: (dirty: boolean) => void;
+}) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingGroupIds, setEditingGroupIds] = useState<string[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<HHForm>(emptyHHForm);
+  // The form as it was opened: unsaved changes are differences from this.
+  const [formStart, setFormStart] = useState<HHForm>(emptyHHForm);
   const [attempted, setAttempted] = useState(false);
   const [pendingDeleteGroup, setPendingDeleteGroup] = useState<GroupedHappyHour | null>(null);
   // Split: first pick the days to take out (splitPick), then edit them as a
@@ -156,6 +179,7 @@ export default function HappyHourManager({ venueId, venueName }: { venueId: stri
 
   const resetForm = () => {
     setForm(emptyHHForm);
+    setFormStart(emptyHHForm);
     setEditingId(null);
     setEditingGroupIds([]);
     setSplitFrom(null);
@@ -165,14 +189,9 @@ export default function HappyHourManager({ venueId, venueName }: { venueId: stri
 
   const startSplit = (group: GroupedHappyHour, days: number[]) => {
     resetForm();
-    setForm({
-      days_of_week: [...days].sort((a, b) => a - b),
-      start_time: group.start_time.slice(0, 5),
-      end_time: group.end_time.slice(0, 5),
-      description: group.description,
-      tags: (group.tags ?? []).filter((t) => (VALID_TAGS as readonly string[]).includes(t)),
-      is_active: group.is_active,
-    });
+    const f = formFromGroup(group, days);
+    setForm(f);
+    setFormStart(f);
     setSplitFrom(group);
     setSplitPick(null);
   };
@@ -181,14 +200,9 @@ export default function HappyHourManager({ venueId, venueName }: { venueId: stri
     setShowForm(false);
     setSplitFrom(null);
     setAttempted(false);
-    setForm({
-      days_of_week: group.days_of_week,
-      start_time: group.start_time.slice(0, 5),
-      end_time: group.end_time.slice(0, 5),
-      description: group.description,
-      tags: (group.tags ?? []).filter((t) => (VALID_TAGS as readonly string[]).includes(t)),
-      is_active: group.is_active,
-    });
+    const f = formFromGroup(group);
+    setForm(f);
+    setFormStart(f);
     setEditingId(group.ids[0]);
     setEditingGroupIds(group.ids);
   };
@@ -220,6 +234,13 @@ export default function HappyHourManager({ venueId, venueName }: { venueId: stri
     else if (editingId) updateHH.mutate({ ...form, id: editingId });
     else createHH.mutate(form);
   };
+
+  // A split that hasn't been saved yet counts as unsaved, even unchanged.
+  const formDirty =
+    !!splitFrom || ((showForm || !!editingId) && JSON.stringify(form) !== JSON.stringify(formStart));
+  useEffect(() => {
+    onDirtyChange?.(formDirty);
+  }, [formDirty, onDirtyChange]);
 
   const isPending =
     createHH.isPending || updateHH.isPending || updateGroupHH.isPending || splitGroupHH.isPending || deleteGroupHH.isPending;

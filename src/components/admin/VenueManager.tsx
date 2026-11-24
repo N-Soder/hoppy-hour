@@ -20,7 +20,8 @@ import { geocodeAddress } from "@/lib/geocode";
 import { countryByCode } from "@/lib/countries";
 import { plural } from "@/lib/format";
 import {
-  filterVenues, readableError, sortVenues, venueCountLabel, type VenueSort, type VenueSortKey,
+  filterVenues, keepRowOrder, readableError, sortVenues, venueCountLabel, VENUE_SORT_OPTIONS, type VenueSort,
+  type VenueSortKey,
 } from "@/lib/admin";
 import HappyHourManager from "./HappyHourManager";
 import { AdminErrorState, AdminLoading } from "./AdminStates";
@@ -75,6 +76,10 @@ export default function VenueManager() {
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [geocodeNote, setGeocodeNote] = useState<string | null>(null);
   const [deleteVenue, setDeleteVenue] = useState<Venue | null>(null);
+  // The form as the dialog opened, to tell whether there are unsaved changes.
+  const [formStart, setFormStart] = useState<VenueForm>(emptyForm);
+  const [dealsDirty, setDealsDirty] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -86,7 +91,18 @@ export default function VenueManager() {
     queryFn: async () => (await api.get<{ venues: Venue[] }>("/api/admin/venues")).venues,
   });
 
-  const visible = useMemo(() => sortVenues(filterVenues(venues, search), sort), [venues, search, sort]);
+  // Rows keep their place while the admin works on them (switching a venue
+  // off under a Status sort mustn't move it away from its Undo toast). The
+  // order is recomputed on an explicit sort or search, when venues are added
+  // or removed, and on reload.
+  const rowOrder = useRef<{ basis: string; ids: string[] } | null>(null);
+  const visible = useMemo(() => {
+    const sorted = sortVenues(filterVenues(venues, search), sort);
+    const basis = `${sort.key}|${sort.dir}|${search.trim().toLowerCase()}`;
+    const kept = keepRowOrder(rowOrder.current?.basis === basis ? rowOrder.current.ids : null, sorted);
+    rowOrder.current = { basis, ids: kept.map((v) => v.id) };
+    return kept;
+  }, [venues, search, sort]);
   // Names that appear more than once: their buttons also name the address.
   const duplicateNames = useMemo(() => {
     const seen = new Map<string, number>();
@@ -195,8 +211,11 @@ export default function VenueManager() {
   });
 
   const openEdit = (venue: Venue) => {
+    const start = { name: venue.name, address: venue.address, country: venue.country ?? "", lat: null, lng: null };
     setEditVenue(venue);
-    setFormData({ name: venue.name, address: venue.address, country: venue.country ?? "", lat: null, lng: null });
+    setFormData(start);
+    setFormStart(start);
+    setDealsDirty(false);
     setGeocodeNote(null);
     setDialogOpen(true);
   };
@@ -204,14 +223,25 @@ export default function VenueManager() {
   const openAdd = () => {
     setEditVenue(null);
     setFormData(emptyForm);
+    setFormStart(emptyForm);
+    setDealsDirty(false);
     setGeocodeNote(null);
     setDialogOpen(true);
   };
 
   const closeDialog = () => {
     setDialogOpen(false);
+    setConfirmDiscard(false);
     setEditVenue(null);
     setFormData(emptyForm);
+    setDealsDirty(false);
+  };
+
+  // Same rule as the review dialog: closing with unsaved edits asks first.
+  const venueDirty = JSON.stringify(formData) !== JSON.stringify(formStart);
+  const requestClose = () => {
+    if (venueDirty || dealsDirty) setConfirmDiscard(true);
+    else closeDialog();
   };
 
   const handleGeocode = async () => {
@@ -282,6 +312,29 @@ export default function VenueManager() {
         <Button size="sm" onClick={openAdd} className="ml-auto sm:ml-0">
           <Plus aria-hidden="true" /> Add venue
         </Button>
+        {/* Phones hide the column headers; this select sorts instead. */}
+        {!isLoading && !isError && (
+          <div className="flex w-full items-center gap-2 sm:hidden">
+            <Label htmlFor={fid("sort")} className="shrink-0 text-sm text-muted-foreground">
+              Sort by
+            </Label>
+            <select
+              id={fid("sort")}
+              className="h-11 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm"
+              value={`${sort.key}:${sort.dir}`}
+              onChange={(e) => {
+                const [key, dir] = e.target.value.split(":") as [VenueSortKey, VenueSort["dir"]];
+                setSort({ key, dir });
+              }}
+            >
+              {VENUE_SORT_OPTIONS.map((o) => (
+                <option key={`${o.key}:${o.dir}`} value={`${o.key}:${o.dir}`}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {isLoading ? (
@@ -292,7 +345,7 @@ export default function VenueManager() {
         <div className="max-h-[calc(100dvh-13rem)] overflow-auto rounded-lg border">
           <table className="w-full caption-bottom text-sm [&_td]:px-2 [&_th]:px-2 sm:[&_td]:px-4 sm:[&_th]:px-4">
             <caption className="sr-only">Venues, {countLabel}</caption>
-            <TableHeader className="sticky top-0 z-10 bg-card shadow-[0_1px_0_hsl(var(--border))]">
+            <TableHeader className="sticky top-0 z-10 hidden bg-card shadow-[0_1px_0_hsl(var(--border))] sm:table-header-group">
               <TableRow className="hover:bg-transparent">
                 <TableHead aria-sort={ariaSort("name")}>
                   <SortButton label="Name" sortKey="name" sort={sort} onSort={toggleSort} />
@@ -314,11 +367,10 @@ export default function VenueManager() {
                 <TableRow key={venue.id}>
                   <TableCell className="py-3 font-medium">
                     {venue.name}
-                    {/* Narrow screens hide the Address and Deals columns; keep both readable here. */}
+                    {/* Narrow screens hide the Address and Deals columns: the address goes
+                        here, the deal count beside the status. */}
                     <span className="mt-0.5 block text-xs font-normal text-muted-foreground sm:hidden">
                       {venue.address}
-                      {venue.deal_count != null && ` · ${plural(venue.deal_count, "deal")}`}
-                      {venue.status === "inactive" && " · Inactive"}
                     </span>
                   </TableCell>
                   <TableCell className="hidden py-3 text-sm text-muted-foreground sm:table-cell">{venue.address}</TableCell>
@@ -327,12 +379,18 @@ export default function VenueManager() {
                     <span className="sr-only">{venue.deal_count != null ? plural(venue.deal_count, "deal") : "Unknown"}</span>
                   </TableCell>
                   <TableCell className="py-3">
-                    <StatusSwitch
-                      checked={venue.status === "active"}
-                      label={`Active: ${venueLabel(venue)}`}
-                      disabled={setStatus.isPending && setStatus.variables?.venue.id === venue.id}
-                      onCheckedChange={(on) => setStatus.mutate({ venue, status: on ? "active" : "inactive" })}
-                    />
+                    <div className="flex flex-col items-start gap-1.5">
+                      <StatusSwitch
+                        checked={venue.status === "active"}
+                        label={`Active: ${venueLabel(venue)}`}
+                        disabled={setStatus.isPending && setStatus.variables?.venue.id === venue.id}
+                        onCheckedChange={(on) => setStatus.mutate({ venue, status: on ? "active" : "inactive" })}
+                      />
+                      <span className="whitespace-nowrap text-xs text-muted-foreground sm:hidden">
+                        {venue.status === "inactive" ? "Inactive · " : ""}
+                        {venue.deal_count != null ? plural(venue.deal_count, "deal") : "– deals"}
+                      </span>
+                    </div>
                   </TableCell>
                   <TableCell className="py-3">
                     <div className="flex gap-1">
@@ -380,7 +438,7 @@ export default function VenueManager() {
         </div>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={(o) => (o ? setDialogOpen(true) : closeDialog())}>
+      <Dialog open={dialogOpen} onOpenChange={(o) => (o ? setDialogOpen(true) : requestClose())}>
         <DialogContent className="max-h-[90dvh] w-[calc(100vw-1rem)] max-w-2xl overflow-y-auto sm:w-[calc(100vw-2rem)]">
           <DialogHeader className="pr-10 text-left">
             <DialogTitle>{editVenue ? `Edit ${editVenue.name}` : "Add a venue"}</DialogTitle>
@@ -465,7 +523,7 @@ export default function VenueManager() {
               </ul>
             )}
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={closeDialog}>
+              <Button variant="outline" onClick={requestClose}>
                 Cancel
               </Button>
               <Button
@@ -479,9 +537,33 @@ export default function VenueManager() {
             </div>
           </div>
 
-          {editVenue && <HappyHourManager venueId={editVenue.id} venueName={venueLabel(editVenue)} />}
+          {editVenue && (
+            <HappyHourManager venueId={editVenue.id} venueName={venueLabel(editVenue)} onDirtyChange={setDealsDirty} />
+          )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={confirmDiscard} onOpenChange={setConfirmDiscard}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard your changes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {editVenue
+                ? `You changed ${editVenue.name}${venueDirty && dealsDirty ? " and one of its deals" : dealsDirty ? "'s deals" : ""} without saving. Closing now throws those changes away.`
+                : "You started adding a venue. Closing now throws it away."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep editing</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={closeDialog}
+            >
+              Discard changes
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={!!deleteVenue} onOpenChange={(open) => !open && !deleteVenueMutation.isPending && setDeleteVenue(null)}>
         <AlertDialogContent>

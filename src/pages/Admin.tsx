@@ -91,9 +91,9 @@ export default function Admin() {
       <main className="flex-1 p-4 md:p-6 max-w-6xl mx-auto w-full">
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="mb-6">
-            <TabsTrigger value="submissions">Submissions</TabsTrigger>
-            <TabsTrigger value="snap">Snap a deal</TabsTrigger>
-            <TabsTrigger value="venues">Venues</TabsTrigger>
+            <TabsTrigger value="submissions" className="touch-target">Submissions</TabsTrigger>
+            <TabsTrigger value="snap" className="touch-target">Snap a deal</TabsTrigger>
+            <TabsTrigger value="venues" className="touch-target">Venues</TabsTrigger>
           </TabsList>
           <TabsContent value="submissions">
             <SubmissionQueue />
