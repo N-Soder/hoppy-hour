@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { geocodeAddress, normalizeAddress } from "@/lib/geocode";
+import { countryCodeFromContext, geocodeAddress, normalizeAddress } from "@/lib/geocode";
 
 // Builds a fetch stub that returns the given JSON payloads in order,
 // repeating the last one if more calls come in.
@@ -99,5 +99,39 @@ describe("geocodeAddress", () => {
     expect(mock).toHaveBeenCalledTimes(2);
     expect(queryOf(mock, 0)).toBe("Barrack St & St Georges Tce");
     expect(queryOf(mock, 1)).toBe("Corner of Barrack St and St Georges Tce");
+  });
+});
+
+describe("geocodeAddress country handling", () => {
+  it("maps any country via the context short_code, not only the five launch countries", async () => {
+    stubFetchResponses({
+      features: [
+        {
+          center: [13.405, 52.52],
+          context: [
+            { id: "place.1", text: "Berlin" },
+            { id: "country.2", text: "Germany", short_code: "de" },
+          ],
+        },
+      ],
+    });
+    expect(await geocodeAddress("", "Alexanderplatz 1, Berlin")).toEqual({
+      coords: { lat: 52.52, lng: 13.405 },
+      country: "DE",
+    });
+  });
+
+  it("falls back to the full country list by name when short_code is missing", () => {
+    expect(countryCodeFromContext([{ id: "country.9", text: "Japan" }])).toBe("JP");
+    expect(countryCodeFromContext([{ id: "country.9", text: "Atlantis" }])).toBeNull();
+    expect(countryCodeFromContext([{ id: "place.1", text: "Perth" }])).toBeNull();
+  });
+
+  it("restricts the search to a known country instead of the deployment default", async () => {
+    const mock = stubFetchResponses({ features: [] });
+    await geocodeAddress("", "Main St 1", "nz");
+    expect(mock.mock.calls[0][0]).toContain("&country=NZ");
+    await geocodeAddress("", "Main St 1");
+    expect(mock.mock.calls.at(-1)?.[0]).not.toContain("country=");
   });
 });

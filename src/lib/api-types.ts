@@ -12,6 +12,8 @@ export interface Venue {
   lat: number | null;
   lng: number | null;
   status: "active" | "inactive";
+  /** Admin list only: deals as grouped in the editor (see GET /api/admin/venues). */
+  deal_count?: number;
 }
 
 export interface HappyHour {
