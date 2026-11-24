@@ -10,7 +10,11 @@ export interface Env {
   SUBMISSION_IMAGES: R2Bucket;
   // Secret (dashboard / .dev.vars): key for the vision-extraction model calls.
   ANTHROPIC_API_KEY: string;
+  // Public pk. token handed to the browser for GL JS (URL-restricted).
   MAPBOX_ACCESS_TOKEN: string;
+  // Optional secret: a separate, server-only token for /api/geocode. When set,
+  // geocoding never uses the public token or a spoofed Referer.
+  MAPBOX_GEOCODE_TOKEN?: string;
   GEOCODE_COUNTRY?: string;
   // Optional Referer to send with server-side Mapbox calls, for URL-restricted
   // tokens. Defaults to the request's own origin (see functions/api/geocode.ts).
