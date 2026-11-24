@@ -1,6 +1,9 @@
 export type Coords = { lat: number; lng: number };
 export type GeocodeResult = { coords: Coords | null; country: string | null };
 
+import { COUNTRIES } from "./countries";
+
+/** Legacy name map; kept for callers. countryCodeFromContext covers every country. */
 export const MAPBOX_COUNTRY_TO_CODE: Record<string, string> = {
   "Australia": "AU",
   "New Zealand": "NZ",
@@ -22,6 +25,24 @@ export function normalizeAddress(address: string): string {
     .trim();
 }
 
+type MapboxContext = { id: string; text: string; short_code?: string };
+
+/**
+ * ISO 3166-1 alpha-2 code for a Mapbox feature's country. Prefers the
+ * context's short_code ("de" → "DE"), which Mapbox sets for every country,
+ * then falls back to matching the English name against the full country list.
+ * Returns null rather than guessing.
+ */
+export function countryCodeFromContext(context: MapboxContext[] | undefined): string | null {
+  const entry = (context ?? []).find((c) => c.id.startsWith("country"));
+  if (!entry) return null;
+  if (entry.short_code && /^[a-z]{2}$/i.test(entry.short_code)) return entry.short_code.toUpperCase();
+  const byName =
+    MAPBOX_COUNTRY_TO_CODE[entry.text] ??
+    COUNTRIES.find((c) => c.name.toLowerCase() === entry.text.toLowerCase())?.code;
+  return byName ?? null;
+}
+
 /**
  * Geocodes an address, trying up to three strategies in order:
  * 1. Normalised address (strips "Corner", converts "and" → "&")
@@ -31,8 +52,15 @@ export function normalizeAddress(address: string): string {
  */
 export async function geocodeAddress(
   name: string,
-  address: string
+  address: string,
+  /**
+   * ISO code of the country the place is in, when known. Sent to the proxy so
+   * the search is restricted to it instead of the deployment's default
+   * GEOCODE_COUNTRY (which would bias every lookup toward one country).
+   */
+  country?: string | null,
 ): Promise<GeocodeResult> {
+  const countryParam = country && /^[a-z]{2}$/i.test(country) ? `&country=${country.toUpperCase()}` : "";
   const normalized = normalizeAddress(address.trim());
   const trimmedName = name.trim();
   // Deduplicate so we don't hit the API twice with the same string
@@ -46,7 +74,7 @@ export async function geocodeAddress(
     if (!query) continue;
     try {
       const res = await fetch(
-        `/api/geocode?q=${encodeURIComponent(query)}`
+        `/api/geocode?q=${encodeURIComponent(query)}${countryParam}`
       );
       const data = await res.json();
 
@@ -60,10 +88,7 @@ export async function geocodeAddress(
       const feature = data?.features?.[0];
       if (feature?.center) {
         const [lng, lat] = feature.center;
-        const context: Array<{ id: string; text: string }> = feature.context ?? [];
-        const countryName = context.find((c) => c.id.startsWith("country"))?.text ?? null;
-        const country = countryName ? (MAPBOX_COUNTRY_TO_CODE[countryName] ?? null) : null;
-        return { coords: { lat, lng }, country };
+        return { coords: { lat, lng }, country: countryCodeFromContext(feature.context) };
       }
     } catch (err) {
       // Re-throw Mapbox API errors (token issues) — don't swallow them
