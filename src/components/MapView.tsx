@@ -415,26 +415,32 @@ export default function MapView({
     map.triggerRepaint();
   }, [venues, liveVenueIds, liveVenueCounts, selectedVenueId, selection, resolvedTheme, attempt, sourceData, renderMarkers]);
 
-  // Keep the selected pin in view, above any sheet covering the bottom.
+  // Keep the selected pin in view, above any sheet covering the bottom. Runs
+  // once per selection/inset (not on every data refresh), after any camera
+  // move in progress — e.g. the initial fly-in when a venue link loads.
+  const pannedFor = useRef<string | null>(null);
+  const selectedVenue = selectedVenueId ? venues.find((v) => v.id === selectedVenueId) : undefined;
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !selectedVenueId) return;
-    const venue = venueById.current.get(selectedVenueId);
-    if (!venue) return;
+    if (!selectedVenueId) pannedFor.current = null;
+    if (!map || !selectedVenue) return;
+    const key = `${selectedVenue.id}|${bottomInset}|${attempt}`;
+    if (pannedFor.current === key) return;
+    pannedFor.current = key;
     const run = () => {
       const { clientWidth: w, clientHeight: h } = map.getContainer();
       if (w === 0 || h === 0) return;
-      const p = map.project([venue.lng, venue.lat]);
+      const p = map.project([selectedVenue.lng, selectedVenue.lat]);
       const top = 72;
       const bottom = h - bottomInset - 32;
       if (p.x >= 32 && p.x <= w - 32 && p.y >= top && p.y <= bottom) return;
       const targetY = Math.max(top, (top + bottom) / 2);
       map.panBy([p.x - w / 2, p.y - targetY], { duration: panDuration() });
     };
-    // Not gated on map.loaded(): that stays false while any tile is pending
-    // or failing, and the camera can move regardless.
-    run();
-  }, [selectedVenueId, bottomInset, attempt]);
+    // Not gated on map.loaded(): that stays false while any tile is pending.
+    if (map.isMoving()) map.once("moveend", run);
+    else run();
+  }, [selectedVenueId, selectedVenue, bottomInset, attempt]);
 
   // User location marker. Only drawn for a real position.
   useEffect(() => {
