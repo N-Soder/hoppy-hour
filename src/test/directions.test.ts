@@ -23,8 +23,16 @@ describe("prefersAppleMaps", () => {
 
 describe("directionsUrl", () => {
   const venue = { name: "Ezra Pound", address: "189 William St, Northbridge WA 6003", lat: -31.9478, lng: 115.8594 };
-  it("builds an Apple Maps link to the coordinates", () => {
-    expect(directionsUrl(venue, true)).toBe("https://maps.apple.com/?daddr=-31.9478%2C115.8594&q=Ezra+Pound");
+  it("builds an Apple Maps link labelled with the venue, hinted at its coordinates", () => {
+    const url = new URL(directionsUrl(venue, true));
+    expect(url.origin + url.pathname).toBe("https://maps.apple.com/");
+    expect(url.searchParams.get("daddr")).toBe("Ezra Pound, 189 William St, Northbridge WA 6003");
+    expect(url.searchParams.get("sll")).toBe("-31.9478,115.8594");
+  });
+  it("labels the destination with the name alone when there is no address", () => {
+    const url = new URL(directionsUrl({ ...venue, address: " " }, true));
+    expect(url.searchParams.get("daddr")).toBe("Ezra Pound");
+    expect(new URL(directionsUrl({ ...venue, address: "" }, false)).searchParams.get("destination")).toBe("Ezra Pound");
   });
   it("builds a Google Maps directions link to the name and address", () => {
     const url = new URL(directionsUrl(venue, false));
