@@ -162,23 +162,45 @@ describe("describeSelection", () => {
 });
 
 describe("formatDistance", () => {
-  it("shows metres under 1km", () => {
-    expect(formatDistance(950)).toBe("950m");
+  // A no-break space between number and unit.
+  const sp = " ";
+
+  it("shows whole metres under 1 km", () => {
+    expect(formatDistance(340, "en-AU")).toBe(`340${sp}m`);
+    expect(formatDistance(0, "en-AU")).toBe(`0${sp}m`);
   });
 
   it("rounds fractional metres", () => {
-    expect(formatDistance(999.4)).toBe("999m");
+    expect(formatDistance(999.4, "en-AU")).toBe(`999${sp}m`);
   });
 
-  it("switches to km at exactly 1000m", () => {
-    expect(formatDistance(1000)).toBe("1.0km");
+  it("moves to km when the metres round up to 1000", () => {
+    expect(formatDistance(999.6, "en-AU")).toBe(`1.0${sp}km`);
+    expect(formatDistance(1000, "en-AU")).toBe(`1.0${sp}km`);
   });
 
-  it("rounds 1250m up to 1.3km (toFixed half-up)", () => {
-    expect(formatDistance(1250)).toBe("1.3km");
+  it("keeps one decimal up to 10 km", () => {
+    expect(formatDistance(1250, "en-AU")).toBe(`1.3${sp}km`);
+    expect(formatDistance(4500, "en-AU")).toBe(`4.5${sp}km`);
+    expect(formatDistance(9940, "en-AU")).toBe(`9.9${sp}km`);
   });
 
-  it("keeps one decimal for long distances", () => {
-    expect(formatDistance(12345)).toBe("12.3km");
+  it("shows whole kilometres from 10 km, never 10.0", () => {
+    expect(formatDistance(9960, "en-AU")).toBe(`10${sp}km`);
+    expect(formatDistance(12345, "en-AU")).toBe(`12${sp}km`);
+  });
+
+  it("uses the locale's thousands separator for long distances", () => {
+    expect(formatDistance(12_528_400, "en-AU")).toBe(`12,528${sp}km`);
+    expect(formatDistance(12_528_400, "de-DE")).toBe(`12.528${sp}km`);
+  });
+
+  it("uses the locale's decimal separator", () => {
+    expect(formatDistance(4500, "de-DE")).toBe(`4,5${sp}km`);
+  });
+
+  it("treats a missing or negative distance as zero", () => {
+    expect(formatDistance(Number.NaN, "en-AU")).toBe(`0${sp}m`);
+    expect(formatDistance(-5, "en-AU")).toBe(`0${sp}m`);
   });
 });
