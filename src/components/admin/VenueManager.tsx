@@ -1,157 +1,210 @@
-import { useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, isAuthError } from "@/lib/api";
+import { ArrowDown, ArrowUp, ArrowUpDown, ExternalLink, Loader2, MapPin, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { api } from "@/lib/api";
 import type { Venue } from "@/lib/api-types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
-} from "@/components/ui/dialog";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Pencil, Loader2, Search, MapPin, ExternalLink, Trash2, Plus } from "lucide-react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
-import HappyHourManager from "./HappyHourManager";
+import { ToastAction } from "@/components/ui/toast";
+import { CountryPicker } from "@/components/submit/CountryPicker";
 import { useToast } from "@/hooks/use-toast";
 import { geocodeAddress } from "@/lib/geocode";
-
-type VenueCountry = "AU" | "NZ" | "US" | "GB" | "CA";
-
-const COUNTRY_OPTIONS: { value: VenueCountry; label: string }[] = [
-  { value: "AU", label: "Australia" },
-  { value: "NZ", label: "New Zealand" },
-  { value: "US", label: "United States" },
-  { value: "GB", label: "United Kingdom" },
-  { value: "CA", label: "Canada" },
-];
+import { countryByCode } from "@/lib/countries";
+import { plural } from "@/lib/format";
+import {
+  filterVenues, readableError, sortVenues, venueCountLabel, type VenueSort, type VenueSortKey,
+} from "@/lib/admin";
+import HappyHourManager from "./HappyHourManager";
+import { AdminErrorState, AdminLoading } from "./AdminStates";
+import { StatusSwitch } from "./StatusSwitch";
 
 type VenueForm = {
   name: string;
   address: string;
-  country: VenueCountry | "";
+  /** ISO 3166-1 alpha-2, or "" when not set. */
+  country: string;
   lat: number | null;
   lng: number | null;
 };
 
 const emptyForm: VenueForm = { name: "", address: "", country: "", lat: null, lng: null };
+const UNDO_MS = 10_000;
+
+function SortButton({
+  label,
+  sortKey,
+  sort,
+  onSort,
+}: {
+  label: string;
+  sortKey: VenueSortKey;
+  sort: VenueSort;
+  onSort: (key: VenueSortKey) => void;
+}) {
+  const active = sort.key === sortKey;
+  const Icon = !active ? ArrowUpDown : sort.dir === "asc" ? ArrowUp : ArrowDown;
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(sortKey)}
+      className="touch-target -mx-2 inline-flex items-center gap-1 rounded px-2 py-1 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {label}
+      <Icon className={`h-3.5 w-3.5 ${active ? "text-foreground" : "opacity-60"}`} aria-hidden="true" />
+      <span className="sr-only">
+        {active ? `, sorted ${sort.dir === "asc" ? "ascending" : "descending"}. Activate to reverse.` : ", activate to sort"}
+      </span>
+    </button>
+  );
+}
 
 export default function VenueManager() {
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<VenueSort>({ key: "name", dir: "asc" });
   const [editVenue, setEditVenue] = useState<Venue | null>(null);
   const [formData, setFormData] = useState<VenueForm>(emptyForm);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [isGeocoding, setIsGeocoding] = useState(false);
+  const [geocodeNote, setGeocodeNote] = useState<string | null>(null);
   const [deleteVenue, setDeleteVenue] = useState<Venue | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const ids = useId();
+  const fid = (n: string) => `${ids}-${n}`;
 
-  const handleMutationError = (err: unknown) => {
-    toast({
-      title: isAuthError(err)
-        ? "Your admin session expired — reload to sign in again"
-        : err instanceof Error
-          ? err.message
-          : "Something went wrong",
-      variant: "destructive",
-    });
-  };
-
-  const { data: venues = [], isLoading } = useQuery({
+  const { data: venues = [], isLoading, isError, error, refetch, isRefetching } = useQuery({
     queryKey: ["admin_venues"],
-    queryFn: async () => {
-      const { venues } = await api.get<{ venues: Venue[] }>("/api/admin/venues");
-      return venues;
-    },
+    queryFn: async () => (await api.get<{ venues: Venue[] }>("/api/admin/venues")).venues,
   });
 
-  const filtered = venues.filter(
-    (v) =>
-      v.name.toLowerCase().includes(search.toLowerCase()) ||
-      v.address.toLowerCase().includes(search.toLowerCase())
-  );
+  const visible = useMemo(() => sortVenues(filterVenues(venues, search), sort), [venues, search, sort]);
+  // Names that appear more than once: their buttons also name the address.
+  const duplicateNames = useMemo(() => {
+    const seen = new Map<string, number>();
+    venues.forEach((v) => seen.set(v.name.toLowerCase(), (seen.get(v.name.toLowerCase()) ?? 0) + 1));
+    return new Set([...seen].filter(([, n]) => n > 1).map(([k]) => k));
+  }, [venues]);
+  const venueLabel = (v: Venue) => (duplicateNames.has(v.name.toLowerCase()) ? `${v.name} (${v.address})` : v.name);
+
+  const toggleSort = (key: VenueSortKey) =>
+    setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" }));
+
+  const onError = (title: string) => (err: unknown) =>
+    toast({ title, description: readableError(err), variant: "destructive" });
+
+  const invalidateVenues = () => queryClient.invalidateQueries({ queryKey: ["admin_venues"] });
 
   const updateVenue = useMutation({
-    mutationFn: async ({ id, lat, lng, ...updates }: Partial<VenueForm> & { id: string; lat?: number | null; lng?: number | null }) => {
+    mutationFn: async ({ id, lat, lng, ...f }: VenueForm & { id: string }) => {
       await api.put(`/api/admin/venues/${id}`, {
-        name: updates.name,
-        address: updates.address,
-        country: updates.country || null,
+        name: f.name.trim(),
+        address: f.address.trim(),
+        country: f.country || null,
         ...(lat != null && lng != null ? { lat, lng } : {}),
       });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin_venues"] });
-      toast({ title: "Venue updated" });
+    onSuccess: (_r, v) => {
+      invalidateVenues();
+      toast({ title: "Venue saved", description: `${v.name.trim()} is updated.` });
       closeDialog();
     },
-    onError: handleMutationError,
+    onError: onError("Couldn't save the venue"),
   });
 
   const createVenue = useMutation({
     mutationFn: async (form: VenueForm) => {
       await api.post<{ id: string }>("/api/admin/venues", {
-        name: form.name,
-        address: form.address,
+        name: form.name.trim(),
+        address: form.address.trim(),
         country: form.country || null,
         lat: form.lat,
         lng: form.lng,
       });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin_venues"] });
-      toast({ title: "Venue created" });
+    onSuccess: (_r, f) => {
+      invalidateVenues();
+      toast({ title: "Venue added", description: `${f.name.trim()} is on the map. Add its deals from the venue's edit screen.` });
       closeDialog();
     },
-    onError: handleMutationError,
+    onError: onError("Couldn't add the venue"),
   });
 
   const deleteVenueMutation = useMutation({
-    mutationFn: async (id: string) => {
-      await api.del(`/api/admin/venues/${id}`);
+    mutationFn: async (venue: Venue) => {
+      await api.del(`/api/admin/venues/${venue.id}`);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin_venues"] });
-      toast({ title: "Venue deleted" });
+    onSuccess: (_r, venue) => {
+      invalidateVenues();
+      queryClient.invalidateQueries({ queryKey: ["admin_happy_hours", venue.id] });
+      toast({ title: "Venue deleted", description: `${venueLabel(venue)} and its deals were removed.` });
       setDeleteVenue(null);
     },
-    onError: handleMutationError,
+    onError: onError("Couldn't delete the venue"),
   });
 
-  const toggleStatus = useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: string }) => {
-      const newStatus = status === "active" ? "inactive" : "active";
-      await api.put(`/api/admin/venues/${id}`, { status: newStatus });
+  // Status switch: optimistic, with a toast that can undo the change.
+  const setStatus = useMutation({
+    mutationFn: async ({ venue, status }: { venue: Venue; status: Venue["status"]; isUndo?: boolean }) => {
+      await api.put(`/api/admin/venues/${venue.id}`, { status });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin_venues"] });
+    onMutate: async ({ venue, status }) => {
+      await queryClient.cancelQueries({ queryKey: ["admin_venues"] });
+      const previous = queryClient.getQueryData<Venue[]>(["admin_venues"]);
+      queryClient.setQueryData<Venue[]>(["admin_venues"], (list) =>
+        list?.map((v) => (v.id === venue.id ? { ...v, status } : v)),
+      );
+      return { previous };
     },
-    onError: handleMutationError,
+    onError: (err, _vars, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(["admin_venues"], ctx.previous);
+      onError("Couldn't change the venue's status")(err);
+    },
+    onSuccess: (_r, { venue, status, isUndo }) => {
+      const name = venueLabel(venue);
+      toast({
+        title: isUndo ? "Change undone" : status === "active" ? `${venue.name} is active` : `${venue.name} is inactive`,
+        description:
+          status === "active" ? `${name} shows on the public map again.` : `${name} is hidden from the public map.`,
+        ...(isUndo
+          ? {}
+          : {
+              duration: UNDO_MS,
+              action: (
+                <ToastAction
+                  altText={`Undo: set ${name} back to ${status === "active" ? "inactive" : "active"}`}
+                  onClick={() =>
+                    setStatus.mutate({ venue, status: status === "active" ? "inactive" : "active", isUndo: true })
+                  }
+                >
+                  Undo
+                </ToastAction>
+              ),
+            }),
+      });
+    },
+    onSettled: invalidateVenues,
   });
 
   const openEdit = (venue: Venue) => {
     setEditVenue(venue);
-    setFormData({
-      name: venue.name,
-      address: venue.address,
-      country: (venue.country as VenueCountry) ?? "",
-      lat: null,
-      lng: null,
-    });
+    setFormData({ name: venue.name, address: venue.address, country: venue.country ?? "", lat: null, lng: null });
+    setGeocodeNote(null);
     setDialogOpen(true);
   };
 
   const openAdd = () => {
     setEditVenue(null);
     setFormData(emptyForm);
+    setGeocodeNote(null);
     setDialogOpen(true);
   };
 
@@ -165,131 +218,204 @@ export default function VenueManager() {
     const address = formData.address.trim();
     if (!address) return;
     setIsGeocoding(true);
+    setGeocodeNote(null);
     try {
-      const { coords } = await geocodeAddress(formData.name, address);
+      const countryName = countryByCode(formData.country)?.name;
+      const query = countryName && !address.toLowerCase().includes(countryName.toLowerCase()) ? `${address}, ${countryName}` : address;
+      const { coords, country } = await geocodeAddress(formData.name, query, formData.country || null);
       if (coords) {
-        const { lat, lng } = coords;
-        setFormData((f) => ({ ...f, lng, lat }));
-        toast({ title: "Coordinates found", description: `${lat.toFixed(5)}, ${lng.toFixed(5)}` });
+        setFormData((f) => ({ ...f, lat: coords.lat, lng: coords.lng, country: f.country || country || "" }));
       } else {
-        toast({ title: "No results", description: "Mapbox couldn't find that address — check it includes suburb and state.", variant: "destructive" });
+        setGeocodeNote("Couldn't find that address. Include the suburb or city, and check the country.");
       }
     } catch (err) {
-      const isApiError = err instanceof Error && err.message.startsWith("Mapbox error:");
-      toast({
-        title: isApiError ? "Mapbox configuration error" : "Geocoding failed",
-        description: isApiError
-          ? `${(err as Error).message} — check MAPBOX_ACCESS_TOKEN in the Cloudflare Pages settings.`
-          : "Network error. Try again.",
-        variant: "destructive",
-      });
+      const mapbox = err instanceof Error && err.message.startsWith("Mapbox error:");
+      setGeocodeNote(
+        mapbox
+          ? `The address lookup is not working (${(err as Error).message}). Check MAPBOX_ACCESS_TOKEN in the Cloudflare Pages settings.`
+          : "The address lookup failed (network). Try again.",
+      );
     } finally {
       setIsGeocoding(false);
     }
   };
 
+  const saveBlockers: string[] = [];
+  if (!formData.name.trim()) saveBlockers.push("Add the venue name.");
+  if (!formData.address.trim()) saveBlockers.push("Add the address.");
+  if (!editVenue && formData.lat === null) saveBlockers.push("Look up the address so the venue has a map pin.");
+
   const handleSave = () => {
-    if (editVenue) {
-      updateVenue.mutate({
-        id: editVenue.id,
-        name: formData.name,
-        address: formData.address,
-        country: formData.country,
-        lat: formData.lat,
-        lng: formData.lng,
-      });
-    } else {
-      createVenue.mutate(formData);
-    }
+    if (saveBlockers.length) return;
+    if (editVenue) updateVenue.mutate({ id: editVenue.id, ...formData });
+    else createVenue.mutate(formData);
   };
 
   const isSaving = updateVenue.isPending || createVenue.isPending;
+  const countLabel = venueCountLabel(visible.length, venues.length);
+  const ariaSort = (key: VenueSortKey) =>
+    sort.key === key ? (sort.dir === "asc" ? "ascending" : "descending") : undefined;
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative min-w-[12rem] flex-1 sm:max-w-sm">
+          <Label htmlFor={fid("search")} className="sr-only">
+            Search venues by name or address
+          </Label>
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
           <Input
+            id={fid("search")}
+            ref={searchRef}
+            type="search"
             placeholder="Search venues…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
           />
         </div>
-        <Badge variant="secondary">{venues.length} venues</Badge>
-        <Button size="sm" onClick={openAdd}>
-          <Plus className="h-4 w-4 mr-1" /> Add Venue
+        {!isLoading && !isError && (
+          <Badge variant="secondary" role="status" aria-live="polite">
+            {countLabel}
+          </Badge>
+        )}
+        <Button size="sm" onClick={openAdd} className="ml-auto sm:ml-0">
+          <Plus aria-hidden="true" /> Add venue
         </Button>
       </div>
 
       {isLoading ? (
-        <div className="flex justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
+        <AdminLoading label="Loading venues…" />
+      ) : isError ? (
+        <AdminErrorState what="venues" error={error} onRetry={() => refetch()} retrying={isRefetching} />
       ) : (
-        <div className="border rounded-lg overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
+        <div className="max-h-[calc(100dvh-13rem)] overflow-auto rounded-lg border">
+          <table className="w-full caption-bottom text-sm [&_td]:px-2 [&_th]:px-2 sm:[&_td]:px-4 sm:[&_th]:px-4">
+            <caption className="sr-only">Venues, {countLabel}</caption>
+            <TableHeader className="sticky top-0 z-10 bg-card shadow-[0_1px_0_hsl(var(--border))]">
+              <TableRow className="hover:bg-transparent">
+                <TableHead aria-sort={ariaSort("name")}>
+                  <SortButton label="Name" sortKey="name" sort={sort} onSort={toggleSort} />
+                </TableHead>
                 <TableHead className="hidden sm:table-cell">Address</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="w-[100px]">Actions</TableHead>
+                <TableHead aria-sort={ariaSort("deals")} className="hidden w-[5.5rem] text-right sm:table-cell">
+                  <SortButton label="Deals" sortKey="deals" sort={sort} onSort={toggleSort} />
+                </TableHead>
+                <TableHead aria-sort={ariaSort("status")} className="w-[5.5rem] sm:w-[9rem]">
+                  <SortButton label="Status" sortKey="status" sort={sort} onSort={toggleSort} />
+                </TableHead>
+                <TableHead className="w-[6.5rem]">
+                  <span className="sr-only">Actions</span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((venue) => (
+              {visible.map((venue) => (
                 <TableRow key={venue.id}>
-                  <TableCell className="font-medium">{venue.name}</TableCell>
-                  <TableCell className="hidden sm:table-cell text-muted-foreground text-sm">
-                    {venue.address}
+                  <TableCell className="py-3 font-medium">
+                    {venue.name}
+                    {/* Narrow screens hide the Address and Deals columns; keep both readable here. */}
+                    <span className="mt-0.5 block text-xs font-normal text-muted-foreground sm:hidden">
+                      {venue.address}
+                      {venue.deal_count != null && ` · ${plural(venue.deal_count, "deal")}`}
+                      {venue.status === "inactive" && " · Inactive"}
+                    </span>
                   </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={venue.status === "active" ? "default" : "secondary"}
-                      className="cursor-pointer"
-                      onClick={() => toggleStatus.mutate({ id: venue.id, status: venue.status })}
-                    >
-                      {venue.status}
-                    </Badge>
+                  <TableCell className="hidden py-3 text-sm text-muted-foreground sm:table-cell">{venue.address}</TableCell>
+                  <TableCell className="hidden py-3 text-right tabular-nums sm:table-cell">
+                    <span aria-hidden="true">{venue.deal_count ?? "–"}</span>
+                    <span className="sr-only">{venue.deal_count != null ? plural(venue.deal_count, "deal") : "Unknown"}</span>
                   </TableCell>
-                  <TableCell className="flex gap-1">
-                    <Button variant="ghost" size="icon" onClick={() => openEdit(venue)}>
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={() => setDeleteVenue(venue)}>
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
+                  <TableCell className="py-3">
+                    <StatusSwitch
+                      checked={venue.status === "active"}
+                      label={`Active: ${venueLabel(venue)}`}
+                      disabled={setStatus.isPending && setStatus.variables?.venue.id === venue.id}
+                      onCheckedChange={(on) => setStatus.mutate({ venue, status: on ? "active" : "inactive" })}
+                    />
+                  </TableCell>
+                  <TableCell className="py-3">
+                    <div className="flex gap-1">
+                      <Button variant="ghost" size="icon" onClick={() => openEdit(venue)} aria-label={`Edit ${venueLabel(venue)}`}>
+                        <Pencil aria-hidden="true" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setDeleteVenue(venue)}
+                        aria-label={`Delete ${venueLabel(venue)}`}
+                        className="text-destructive-text hover:text-destructive-text"
+                      >
+                        <Trash2 aria-hidden="true" />
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
-              {filtered.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                    No venues found
+              {visible.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+                    {venues.length === 0 ? (
+                      "No venues yet. Add one, or approve a submission."
+                    ) : (
+                      <>
+                        No venues match “{search.trim()}”.{" "}
+                        <button
+                          type="button"
+                          className="text-primary underline underline-offset-2"
+                          onClick={() => {
+                            setSearch("");
+                            searchRef.current?.focus();
+                          }}
+                        >
+                          Clear search
+                        </button>
+                      </>
+                    )}
                   </TableCell>
                 </TableRow>
               )}
             </TableBody>
-          </Table>
+          </table>
         </div>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{editVenue ? "Edit Venue" : "Add Venue"}</DialogTitle>
+      <Dialog open={dialogOpen} onOpenChange={(o) => (o ? setDialogOpen(true) : closeDialog())}>
+        <DialogContent className="max-h-[90dvh] w-[calc(100vw-1rem)] max-w-2xl overflow-y-auto sm:w-[calc(100vw-2rem)]">
+          <DialogHeader className="pr-10 text-left">
+            <DialogTitle>{editVenue ? `Edit ${editVenue.name}` : "Add a venue"}</DialogTitle>
+            <DialogDescription>
+              {editVenue ? "Change the venue's details, or manage its deals below." : "Fields marked * are required."}
+            </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
+          <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Name</Label>
-              <Input value={formData.name} onChange={(e) => setFormData((f) => ({ ...f, name: e.target.value }))} />
+              <Label htmlFor={fid("name")}>
+                Name <span aria-hidden="true" className="text-destructive-text">*</span>
+              </Label>
+              <Input
+                id={fid("name")}
+                required
+                value={formData.name}
+                onChange={(e) => setFormData((f) => ({ ...f, name: e.target.value }))}
+              />
             </div>
             <div className="space-y-2">
-              <Label>Address</Label>
+              <Label htmlFor={fid("country")}>Country</Label>
+              <CountryPicker
+                id={fid("country")}
+                value={formData.country || null}
+                onChange={(code) => setFormData((f) => ({ ...f, country: code }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor={fid("address")}>
+                Address <span aria-hidden="true" className="text-destructive-text">*</span>
+              </Label>
               <div className="flex gap-2">
                 <Input
+                  id={fid("address")}
+                  required
                   className="flex-1"
                   value={formData.address}
                   onChange={(e) => setFormData((f) => ({ ...f, address: e.target.value, lat: null, lng: null }))}
@@ -297,85 +423,90 @@ export default function VenueManager() {
                 <Button
                   type="button"
                   variant="outline"
-                  size="sm"
                   onClick={handleGeocode}
                   disabled={isGeocoding || !formData.address.trim()}
                   className="shrink-0"
                 >
-                  {isGeocoding ? <Loader2 className="h-4 w-4 animate-spin" /> : <MapPin className="h-4 w-4" />}
-                  <span className="ml-1 hidden sm:inline">Re-geocode</span>
+                  {isGeocoding ? <Loader2 className="animate-spin" aria-hidden="true" /> : <MapPin aria-hidden="true" />}
+                  {editVenue ? "Look up again" : "Look up"}
                 </Button>
               </div>
-              {formData.lat != null && formData.lng != null && (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Badge variant="secondary" className="font-mono text-xs">
-                    {formData.lat.toFixed(5)}, {formData.lng.toFixed(5)}
-                  </Badge>
-                  <a
-                    href={`https://www.google.com/maps/search/?api=1&query=${formData.lat},${formData.lng}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                  >
-                    Verify on Maps <ExternalLink className="h-3 w-3" />
-                  </a>
-                </div>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label>Country</Label>
-              <Select
-                value={formData.country}
-                onValueChange={(v) => setFormData((f) => ({ ...f, country: v as VenueCountry }))}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select country…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {COUNTRY_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div aria-live="polite" className="text-sm">
+                {formData.lat != null && formData.lng != null ? (
+                  <p className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                    New pin: <span className="font-mono text-xs">{formData.lat.toFixed(5)}, {formData.lng.toFixed(5)}</span>
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${formData.lat},${formData.lng}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                    >
+                      Check on Google Maps <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                    </a>
+                  </p>
+                ) : editVenue ? (
+                  <p className="text-xs text-muted-foreground">
+                    {editVenue.lat != null && editVenue.lng != null
+                      ? `Current pin: ${editVenue.lat.toFixed(5)}, ${editVenue.lng.toFixed(5)}. Look up again to move it.`
+                      : "This venue has no map pin. Look up the address to add one."}
+                  </p>
+                ) : null}
+                {geocodeNote && <p className="mt-1 text-amber-700 dark:text-amber-400">{geocodeNote}</p>}
+              </div>
             </div>
           </div>
 
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center pt-2">
-            {!editVenue && formData.lat === null && formData.address.trim() && (
-              <p className="text-xs text-amber-600 dark:text-amber-400 flex-1">
-                Geocode the address so this venue appears on the map.
-              </p>
+          <div className="space-y-2 border-t pt-3">
+            {saveBlockers.length > 0 && (formData.name || formData.address || editVenue) && (
+              <ul id={fid("save-blockers")} className="list-disc pl-5 text-sm text-amber-700 dark:text-amber-400" aria-live="polite">
+                {saveBlockers.map((b) => (
+                  <li key={b}>{b}</li>
+                ))}
+              </ul>
             )}
-            <div className="flex gap-2 w-full sm:w-auto justify-end">
-              <Button variant="outline" onClick={closeDialog}>Cancel</Button>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={closeDialog}>
+                Cancel
+              </Button>
               <Button
                 onClick={handleSave}
-                disabled={isSaving || !formData.name.trim() || !formData.address.trim() || (!editVenue && formData.lat === null)}
+                disabled={isSaving || saveBlockers.length > 0}
+                aria-describedby={saveBlockers.length > 0 ? fid("save-blockers") : undefined}
               >
-                {isSaving ? "Saving…" : editVenue ? "Save Changes" : "Create Venue"}
+                {isSaving && <Loader2 className="animate-spin" aria-hidden="true" />}
+                {editVenue ? "Save venue" : "Add venue"}
               </Button>
             </div>
           </div>
 
-          {editVenue && <HappyHourManager venueId={editVenue.id} />}
+          {editVenue && <HappyHourManager venueId={editVenue.id} venueName={venueLabel(editVenue)} />}
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={!!deleteVenue} onOpenChange={(open) => !open && setDeleteVenue(null)}>
+      <AlertDialog open={!!deleteVenue} onOpenChange={(open) => !open && !deleteVenueMutation.isPending && setDeleteVenue(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete venue?</AlertDialogTitle>
+            <AlertDialogTitle>Delete {deleteVenue?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete <strong>{deleteVenue?.name}</strong> and all its associated hoppy hours. This action cannot be undone.
+              This permanently deletes <strong>{deleteVenue?.name}</strong> at {deleteVenue?.address}
+              {deleteVenue?.deal_count != null && deleteVenue.deal_count > 0
+                ? `, and its ${plural(deleteVenue.deal_count, "deal")}`
+                : ""}
+              . It can't be undone. To hide it from the map instead, switch it to inactive.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleteVenueMutation.isPending}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => deleteVenue && deleteVenueMutation.mutate(deleteVenue.id)}
+              onClick={(e) => {
+                e.preventDefault();
+                if (deleteVenue) deleteVenueMutation.mutate(deleteVenue);
+              }}
+              disabled={deleteVenueMutation.isPending}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {deleteVenueMutation.isPending ? "Deleting…" : "Delete"}
+              {deleteVenueMutation.isPending && <Loader2 className="animate-spin" aria-hidden="true" />}
+              Delete venue
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

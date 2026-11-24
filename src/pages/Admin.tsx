@@ -66,14 +66,14 @@ export default function Admin() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="flex items-center justify-between px-6 py-3 border-b border-border bg-card">
+      <header className="flex items-center justify-between gap-2 px-3 sm:px-6 py-3 border-b border-border bg-card">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" asChild>
             <Link to="/" aria-label="Back to the map"><ArrowLeft className="h-4 w-4" aria-hidden="true" /></Link>
           </Button>
           <div className="flex items-center gap-2">
             <img src="/favicon.ico" alt="" className="h-8 w-8" />
-            <h1 className="text-lg font-bold tracking-tight">HoppyHour admin</h1>
+            <h1 className="whitespace-nowrap text-base sm:text-lg font-bold tracking-tight">HoppyHour admin</h1>
           </div>
         </div>
         <div className="flex items-center gap-3">
