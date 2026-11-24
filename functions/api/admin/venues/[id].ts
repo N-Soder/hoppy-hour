@@ -3,6 +3,7 @@
 import type { Env } from "../../../_shared/db";
 import { nowIso } from "../../../_shared/db";
 import { error, json, readJson } from "../../../_shared/http";
+import { validateVenuePatch } from "../../../_shared/validate";
 
 // Column whitelist — SET names come only from here, never from request keys.
 const EDITABLE = ["name", "address", "country", "lat", "lng", "status"] as const;
@@ -11,7 +12,10 @@ type Editable = (typeof EDITABLE)[number];
 export const onRequestPut: PagesFunction<Env> = async ({ request, env, params }) => {
   const id = params.id as string;
   const body = await readJson<Record<string, unknown>>(request);
-  if (!body) return error("invalid JSON", 400);
+  if (!body || typeof body !== "object" || Array.isArray(body)) return error("invalid JSON", 400);
+  const patchErr = validateVenuePatch(body);
+  if (patchErr) return error(patchErr, 400);
+  if (typeof body.country === "string") body.country = body.country.toUpperCase();
 
   const keys = EDITABLE.filter((k) => k in body);
   if (keys.length === 0) return error("no fields to update", 400);

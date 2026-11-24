@@ -23,7 +23,7 @@
 import type { Env } from "../../../../_shared/db";
 import { nowIso, toHms } from "../../../../_shared/db";
 import { error, json, readJson } from "../../../../_shared/http";
-import { normalizeTags, validateDealFields, isStringLen } from "../../../../_shared/validate";
+import { normalizeTags, validateDealFields, validateVenue } from "../../../../_shared/validate";
 import { MAX_DEALS_PER_SUBMISSION, type ApproveInput } from "../../../../../src/lib/api-types";
 
 interface VenueRow {
@@ -36,12 +36,8 @@ interface VenueRow {
 }
 
 function validateVenueFields(v: NonNullable<ApproveInput["venue"]>, label: string): Response | null {
-  if (!isStringLen(v.name, 200)) return error(`${label}.name is required (max 200)`, 400);
-  if (!isStringLen(v.address, 500)) return error(`${label}.address is required (max 500)`, 400);
-  if (typeof v.lat !== "number" || typeof v.lng !== "number") {
-    return error(`${label}.lat and ${label}.lng are required`, 400);
-  }
-  return null;
+  const err = validateVenue(v, { requireCoords: true });
+  return err ? error(`${label}.${err}`, 400) : null;
 }
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }) => {
@@ -148,7 +144,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
       env.DB.prepare(
         `INSERT INTO venues (id, name, address, country, lat, lng, status, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7, ?7)`,
-      ).bind(newVenueId, v.name, v.address, v.country ?? null, v.lat, v.lng, now),
+      ).bind(newVenueId, v.name, v.address, v.country?.toUpperCase() ?? null, v.lat, v.lng, now),
     );
   } else if (b.venue_update) {
     const v = b.venue_update;
@@ -156,7 +152,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
       env.DB.prepare(
         `UPDATE venues SET name = ?2, address = ?3, country = ?4, lat = ?5, lng = ?6, updated_at = ?7
           WHERE id = ?1`,
-      ).bind(targetVenueId, v.name, v.address, v.country ?? null, v.lat, v.lng, now),
+      ).bind(targetVenueId, v.name, v.address, v.country?.toUpperCase() ?? null, v.lat, v.lng, now),
     );
   }
   statements.push(
