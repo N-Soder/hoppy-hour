@@ -19,9 +19,7 @@ import { useGeolocation } from "@/hooks/use-geolocation";
 import {
   useVenue,
   useVenuesWithinRadius,
-  filterByDayAndTime,
   filterByTags,
-  type HappyHour,
   type VenueWithHappyHours,
 } from "@/hooks/use-venues";
 import { useOnlineStatus } from "@/hooks/use-online-status";
@@ -43,7 +41,8 @@ import { geoBanner, geoChip, hasRealLocation, isLocating } from "@/lib/geo-statu
 import { describeEmptyState, selectListState } from "@/lib/list-state";
 import { MAX_RADIUS, RADIUS_OPTIONS, formatDistanceRadius } from "@/lib/radius";
 import { countActiveFilters, fromDateParam, toDateParam } from "@/lib/url-state";
-import { describeNextDeal, findNextDeal } from "@/lib/next-deal";
+import { areaTimeZone, dealsOnAt, nextDealLabel, selectionInstant, venueClock } from "@/lib/venue-time";
+import { sameClock, viewerTimeZone, wallClockAsLocalDate, wallClockAt, zoneLabel } from "@/lib/zoned-time";
 import { scrollBehavior } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
@@ -73,19 +72,6 @@ export default function Index() {
   const token = tokenQuery.data;
   const isOnline = useOnlineStatus();
 
-  // Wall clock, refreshed every minute. With no date/time in the URL the
-  // filter is "now" and follows it (including across midnight).
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 60_000);
-    return () => clearInterval(id);
-  }, []);
-  const todayKey = now.toDateString();
-  const date = useMemo(
-    () => (url.date ? fromDateParam(url.date) : new Date(todayKey)),
-    [url.date, todayKey],
-  );
-  const time = url.time ?? roundTo15(now);
   const radius = url.radius;
   const selectedTags = url.tags;
   const searchQuery = url.q;
@@ -113,15 +99,50 @@ export default function Index() {
     () => (linkedVenue ? [...venues, linkedVenue] : venues),
     [venues, linkedVenue],
   );
-  const happyHours = useMemo(() => venuesAll.flatMap((v) => v.happy_hours), [venuesAll]);
+  // ── When: the date/time filter and each venue's clock ────────────────
+  // The filter is in the time zone of the area being searched (see
+  // lib/venue-time); each venue is then checked on its own wall clock.
+  const viewerZone = useMemo(() => viewerTimeZone(), []);
+  const areaZone = useMemo(
+    () => areaTimeZone(venues.length > 0 ? venues : linkedVenue ? [linkedVenue] : [], viewerZone),
+    [venues, linkedVenue, viewerZone],
+  );
 
-  // Apply filters
-  const dayOfWeek = date.getDay();
-  const timeStr = time + ":00";
-  const tagFilteredHH = useMemo(() => filterByTags(happyHours, selectedTags), [happyHours, selectedTags]);
+  // Wall clock, refreshed every minute. With no date/time in the URL the
+  // filter is "now" in the area's zone and follows it (including across
+  // midnight). areaNow is a local Date whose getters read the area's clock.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  const areaNow = useMemo(() => wallClockAsLocalDate(wallClockAt(now, areaZone)), [now, areaZone]);
+  const todayKey = areaNow.toDateString();
+  const date = useMemo(
+    () => (url.date ? fromDateParam(url.date) : new Date(todayKey)),
+    [url.date, todayKey],
+  );
+  const time = url.time ?? roundTo15(areaNow);
+  const selectedAt = useMemo(() => selectionInstant(date, time, areaZone), [date, time, areaZone]);
+  const nowMs = now.getTime();
+  const venueClocks = useMemo(
+    () => new Map(venuesAll.map((v) => [v.id, venueClock(v.timezone, viewerZone, selectedAt, nowMs)])),
+    [venuesAll, viewerZone, selectedAt, nowMs],
+  );
+  const zoneNotes = useMemo(
+    () => new Map([...venueClocks].map(([id, c]) => [id, c.zoneNote])),
+    [venueClocks],
+  );
+  const filterZoneNote = sameClock(areaZone, viewerZone, selectedAt) ? null : zoneLabel(areaZone);
+
+  // Apply filters: tags, then what is on at each venue's own clock.
+  const tagFilteredByVenue = useMemo(
+    () => new Map(venuesAll.map((v) => [v.id, filterByTags(v.happy_hours, selectedTags)])),
+    [venuesAll, selectedTags],
+  );
   const filteredHH = useMemo(
-    () => filterByDayAndTime(tagFilteredHH, dayOfWeek, timeStr),
-    [tagFilteredHH, dayOfWeek, timeStr],
+    () => venuesAll.flatMap((v) => dealsOnAt(tagFilteredByVenue.get(v.id) ?? [], venueClocks.get(v.id)!)),
+    [venuesAll, tagFilteredByVenue, venueClocks],
   );
   const filteredHHIds = useMemo(() => new Set(filteredHH.map((h) => h.id)), [filteredHH]);
   const liveVenueCounts = useMemo(() => {
@@ -130,24 +151,17 @@ export default function Index() {
     return counts;
   }, [filteredHH]);
   const liveVenueIds = useMemo(() => new Set(liveVenueCounts.keys()), [liveVenueCounts]);
-  const selectedIsToday = sameDay(date, now);
 
-  // Next deal for every venue with nothing on at the selection.
+  // Next deal for every venue with nothing on at the selection, on its clock.
   const nextDealLabels = useMemo(() => {
-    const byVenue = new Map<string, HappyHour[]>();
-    tagFilteredHH.forEach((hh) => {
-      const list = byVenue.get(hh.venue_id) ?? [];
-      list.push(hh);
-      byVenue.set(hh.venue_id, list);
-    });
     const labels = new Map<string, string>();
-    byVenue.forEach((deals, venueId) => {
+    tagFilteredByVenue.forEach((deals, venueId) => {
       if (liveVenueIds.has(venueId)) return;
-      const next = findNextDeal(deals, dayOfWeek, time);
-      if (next) labels.set(venueId, describeNextDeal(next, selectedIsToday));
+      const label = nextDealLabel(deals, venueClocks.get(venueId)!);
+      if (label) labels.set(venueId, label);
     });
     return labels;
-  }, [tagFilteredHH, liveVenueIds, dayOfWeek, time, selectedIsToday]);
+  }, [tagFilteredByVenue, liveVenueIds, venueClocks]);
 
   // Name/address search, then live venues first, then by distance.
   const allVenuesWithHH: VenueWithHappyHours[] = useMemo(() => {
@@ -273,15 +287,15 @@ export default function Index() {
   const handleSearchArea = () => {
     if (mapCenter) setSearchCenter(mapCenter);
   };
-  const selection = useMemo(() => describeSelection(date, time, now), [date, time, now]);
+  const selection = useMemo(() => describeSelection(date, time, areaNow), [date, time, areaNow]);
 
   const resetToNow = useCallback(() => {
     setNow(new Date());
     updateUrl({ date: null, time: null });
   }, [updateUrl]);
   const onDateChange = useCallback(
-    (d: Date) => updateUrl({ date: sameDay(d, new Date()) ? null : toDateParam(d) }),
-    [updateUrl],
+    (d: Date) => updateUrl({ date: sameDay(d, areaNow) ? null : toDateParam(d) }),
+    [updateUrl, areaNow],
   );
   const onTimeChange = useCallback((t: string) => updateUrl({ time: t || null }), [updateUrl]);
   const onRadiusChange = useCallback((r: number) => updateUrl({ radius: r }), [updateUrl]);
@@ -406,6 +420,7 @@ export default function Index() {
     : {};
 
   const detailStatus = detailVenue ? venueStatus(detailVenue, liveVenueCounts, nextDealLabels) : null;
+  const detailClock = detailVenue ? venueClocks.get(detailVenue.id) ?? null : null;
   const outsideRadiusNote =
     detailVenue && !venueInList
       ? `Outside your ${formatDistanceRadius(radius)} search area, so it isn't in the list. Distance is from ${realLocation && !searchCenter ? "you" : "the map's search centre"}.`
@@ -516,6 +531,8 @@ export default function Index() {
               onDateChange={onDateChange}
               time={time}
               onTimeChange={onTimeChange}
+              today={areaNow}
+              zoneNote={filterZoneNote}
               isNow={selection.isNow}
               onResetToNow={resetToNow}
               radius={radius}
@@ -626,6 +643,7 @@ export default function Index() {
                     filteredHappyHourIds={filteredHHIds}
                     liveVenueIds={liveVenueIds}
                     nextDealLabels={nextDealLabels}
+                    zoneNotes={zoneNotes}
                     selection={selection}
                   />
                 </>
@@ -641,7 +659,7 @@ export default function Index() {
                   </Button>
                 </div>
                 <div ref={panelScrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 pt-4">
-                  {detailVenue && detailStatus ? (
+                  {detailVenue && detailStatus && detailClock ? (
                     <div className="pb-6">
                       <VenueDetail
                         ref={panelHeadingRef}
@@ -649,8 +667,9 @@ export default function Index() {
                         status={detailStatus}
                         selection={selection}
                         filteredHappyHourIds={filteredHHIds}
-                        selectedDay={dayOfWeek}
-                        selectedIsToday={selectedIsToday}
+                        selectedDay={detailClock.day}
+                        selectedIsToday={detailClock.isToday}
+                        zoneNote={detailClock.zoneNote}
                         outsideRadiusNote={outsideRadiusNote}
                         headingId="venue-panel-title"
                       />
@@ -737,7 +756,7 @@ export default function Index() {
       </div>
 
       {/* Phone venue detail: one sheet, from the list or the map. */}
-      {isMobile && venueOpen && detailVenue && detailStatus && (
+      {isMobile && venueOpen && detailVenue && detailStatus && detailClock && (
         <VenueSheet
           venue={detailVenue}
           status={detailStatus}
@@ -746,8 +765,9 @@ export default function Index() {
           onClose={closeVenue}
           selection={selection}
           filteredHappyHourIds={filteredHHIds}
-          selectedDay={dayOfWeek}
-          selectedIsToday={selectedIsToday}
+          selectedDay={detailClock.day}
+          selectedIsToday={detailClock.isToday}
+          zoneNote={detailClock.zoneNote}
           outsideRadiusNote={outsideRadiusNote}
           onHeightChange={setSheetHeight}
         />

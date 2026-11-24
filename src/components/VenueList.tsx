@@ -11,6 +11,7 @@ import { groupHappyHours, type GroupedHappyHour } from "@/lib/happy-hour-utils";
 import type { EmptyStateCopy } from "@/lib/list-state";
 import { scrollBehavior } from "@/lib/motion";
 import LiveBadge from "@/components/LiveBadge";
+import { ZoneNote } from "@/components/VenueDetail";
 
 interface VenueListProps {
   venues: VenueWithHappyHours[];
@@ -20,6 +21,8 @@ interface VenueListProps {
   liveVenueIds: Set<string>;
   /** "Fri 4–6 pm" for venues with no deal on at the selection. */
   nextDealLabels: Map<string, string>;
+  /** "Perth time" for venues whose clock differs from the viewer's; absent or null otherwise. */
+  zoneNotes?: Map<string, string | null>;
   selection: SelectionLabel;
 }
 
@@ -30,6 +33,7 @@ export default function VenueList({
   filteredHappyHourIds,
   liveVenueIds,
   nextDealLabels,
+  zoneNotes,
   selection,
 }: VenueListProps) {
   const itemRefs = useRef<Map<string, HTMLLIElement>>(new Map());
@@ -49,6 +53,7 @@ export default function VenueList({
         const isSelected = venue.id === selectedVenueId;
         const next = isLive ? null : nextDealLabels.get(venue.id) ?? null;
         const dealCount = groupHappyHours(venue.happy_hours).length;
+        const zoneNote = zoneNotes?.get(venue.id) ?? null;
 
         return (
           <li
@@ -81,6 +86,8 @@ export default function VenueList({
                       {venue.name}
                     </button>
                   </h3>
+                  {/* No zone note here: it would squeeze the name. The filter's
+                      time pill already says which zone "now" is in. */}
                   {isLive && <LiveBadge selection={selection} />}
                 </div>
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">{venue.address}</p>
@@ -121,6 +128,7 @@ export default function VenueList({
                     <span className="text-muted-foreground">No deal matches your filters</span>
                   )}
                 </span>
+                {next && <ZoneNote note={zoneNote} />}
                 <span className="flex-shrink-0 whitespace-nowrap text-muted-foreground">{plural(dealCount, "deal")}</span>
               </div>
             )}

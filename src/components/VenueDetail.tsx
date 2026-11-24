@@ -15,14 +15,31 @@ import type { VenueStatus } from "@/lib/venue-status";
 
 export type { VenueStatus } from "@/lib/venue-status";
 
+/**
+ * "Perth time": a quiet note that the times beside it are in the venue's zone,
+ * shown only when that zone's clock differs from the viewer's.
+ */
+export function ZoneNote({ note, className }: { note: string | null | undefined; className?: string }) {
+  if (!note) return null;
+  return (
+    <span className={cn("flex-shrink-0 whitespace-nowrap text-[11px] text-muted-foreground", className)}>
+      <span aria-hidden="true">· </span>
+      {note}
+    </span>
+  );
+}
+
 /** One line: LIVE badge (or the next deal) plus the deal count. */
 export function VenueStatusLine({
   status,
   selection,
+  zoneNote,
   className,
 }: {
   status: VenueStatus;
   selection: SelectionLabel;
+  /** "Perth time" when the venue's clock differs from the viewer's. */
+  zoneNote?: string | null;
   className?: string;
 }) {
   return (
@@ -41,6 +58,7 @@ export function VenueStatusLine({
           {status.dealCount > 0 ? "No deal matches your filters" : "No deals listed"}
         </span>
       )}
+      <ZoneNote note={zoneNote} />
       {!status.isLive && status.dealCount > 0 && (
         <span className="ml-auto flex-shrink-0 whitespace-nowrap text-muted-foreground">
           {plural(status.dealCount, "deal")}
@@ -80,6 +98,8 @@ interface VenueDetailProps {
   /** Weekday of the selected date (0=Sun…6=Sat): its deals come first. */
   selectedDay: number;
   selectedIsToday: boolean;
+  /** "Perth time" when the venue's clock differs from the viewer's (deal times are venue time). */
+  zoneNote?: string | null;
   /** Set when the venue lies outside the search radius (opened from a link). */
   outsideRadiusNote?: string | null;
   /** Id for the heading, so the containing dialog/panel can be labelled by it. */
@@ -94,7 +114,7 @@ interface VenueDetailProps {
  * Shared by the desktop side panel and the phone bottom sheet.
  */
 const VenueDetail = forwardRef<HTMLHeadingElement, VenueDetailProps>(function VenueDetail(
-  { venue, status, selection, filteredHappyHourIds, selectedDay, selectedIsToday, outsideRadiusNote, headingId, hideHeader },
+  { venue, status, selection, filteredHappyHourIds, selectedDay, selectedIsToday, zoneNote, outsideRadiusNote, headingId, hideHeader },
   headingRef,
 ) {
   const grouped = groupHappyHours(venue.happy_hours);
@@ -113,7 +133,7 @@ const VenueDetail = forwardRef<HTMLHeadingElement, VenueDetailProps>(function Ve
           <h2 id={headingId} ref={headingRef} tabIndex={-1} className="text-lg font-semibold leading-tight focus:outline-none">
             {venue.name}
           </h2>
-          <VenueStatusLine status={status} selection={selection} className="mt-1" />
+          <VenueStatusLine status={status} selection={selection} zoneNote={zoneNote} className="mt-1" />
         </div>
       )}
 
@@ -132,8 +152,9 @@ const VenueDetail = forwardRef<HTMLHeadingElement, VenueDetailProps>(function Ve
       <VenueActions venue={venue} />
 
       <section className="border-t border-border pt-4" aria-labelledby={`${headingId}-deals`}>
-        <h3 id={`${headingId}-deals`} className="mb-3 text-sm font-semibold">
+        <h3 id={`${headingId}-deals`} className="mb-3 flex items-baseline gap-1.5 text-sm font-semibold">
           Deals
+          {zoneNote && <span className="text-xs font-normal text-muted-foreground">· times are {zoneNote}</span>}
         </h3>
         {ordered.length === 0 ? (
           <p className="text-sm text-muted-foreground">No deals listed</p>

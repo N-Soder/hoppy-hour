@@ -19,6 +19,8 @@ interface VenueSheetProps {
   filteredHappyHourIds: Set<string>;
   selectedDay: number;
   selectedIsToday: boolean;
+  /** "Perth time" when the venue's clock differs from the viewer's. */
+  zoneNote?: string | null;
   outsideRadiusNote?: string | null;
   /** Reports the sheet's height, so the map can keep the pin above it. */
   onHeightChange?: (px: number) => void;
@@ -44,6 +46,7 @@ export default function VenueSheet({
   filteredHappyHourIds,
   selectedDay,
   selectedIsToday,
+  zoneNote,
   outsideRadiusNote,
   onHeightChange,
 }: VenueSheetProps) {
@@ -176,7 +179,7 @@ export default function VenueSheet({
         <div id="venue-sheet-body" className="min-h-0 flex-1 flex flex-col">
           {expanded ? (
             <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4">
-              <VenueStatusLine status={status} selection={selection} className="mb-3" />
+              <VenueStatusLine status={status} selection={selection} zoneNote={zoneNote} className="mb-3" />
               <VenueDetail
                 venue={venue}
                 status={status}
@@ -184,6 +187,7 @@ export default function VenueSheet({
                 filteredHappyHourIds={filteredHappyHourIds}
                 selectedDay={selectedDay}
                 selectedIsToday={selectedIsToday}
+                zoneNote={zoneNote}
                 outsideRadiusNote={outsideRadiusNote}
                 headingId="venue-sheet-detail"
                 hideHeader
@@ -192,7 +196,7 @@ export default function VenueSheet({
             </div>
           ) : (
             <div className="space-y-2 px-4 pb-4">
-              <VenueStatusLine status={status} selection={selection} />
+              <VenueStatusLine status={status} selection={selection} zoneNote={zoneNote} />
               {onNow[0] && (
                 <p className="flex items-center gap-2 text-sm">
                   <Clock className="h-3.5 w-3.5 flex-shrink-0 text-primary" aria-hidden="true" />

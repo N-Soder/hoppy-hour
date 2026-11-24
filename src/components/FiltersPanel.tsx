@@ -20,6 +20,13 @@ interface FiltersPanelProps {
   onDateChange: (d: Date) => void;
   time: string;
   onTimeChange: (t: string) => void;
+  /**
+   * Today in the zone of the area being searched (a local Date whose getters
+   * read that zone's clock), for the "Today"/"Tomorrow" labels.
+   */
+  today: Date;
+  /** "Perth time" when the filter's zone (the area's) differs from the viewer's; else null. */
+  zoneNote: string | null;
   /** The date/time filter is the present moment. */
   isNow: boolean;
   /** Put the date and time back to now. */
@@ -34,14 +41,12 @@ interface FiltersPanelProps {
   mapboxToken: string | undefined;
 }
 
-function isToday(d: Date): boolean {
-  return d.toDateString() === new Date().toDateString();
+function sameDay(a: Date, b: Date): boolean {
+  return a.toDateString() === b.toDateString();
 }
 
-function isTomorrow(d: Date): boolean {
-  const t = new Date();
-  t.setDate(t.getDate() + 1);
-  return d.toDateString() === t.toDateString();
+function dayAfter(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
 }
 
 // Pills are 40px tall; the Button primitive's touch-target grows the hit area
@@ -57,6 +62,8 @@ export default function FiltersPanel({
   onDateChange,
   time,
   onTimeChange,
+  today,
+  zoneNote,
   isNow,
   onResetToNow,
   radius,
@@ -72,9 +79,11 @@ export default function FiltersPanel({
   const { toast } = useToast();
 
   const displayTime = formatClock(time);
-  const dateLabel = isToday(date) ? "Today" : isTomorrow(date) ? "Tomorrow" : format(date, "EEE d MMM");
+  const isToday = sameDay(date, today);
+  const isTomorrow = sameDay(date, dayAfter(today));
+  const dateLabel = isToday ? "Today" : isTomorrow ? "Tomorrow" : format(date, "EEE d MMM");
   // Phones: "Sat 28" keeps the when/where row on one line with "Now" showing.
-  const shortDateLabel = isToday(date) || isTomorrow(date) ? dateLabel : format(date, "EEE d");
+  const shortDateLabel = isToday || isTomorrow ? dateLabel : format(date, "EEE d");
 
   const toggleTag = (tag: string) => {
     onTagsChange(
@@ -162,7 +171,7 @@ export default function FiltersPanel({
               variant="outline"
               size="sm"
               className={triggerClass}
-              aria-label={`Date: ${isToday(date) ? "today" : format(date, "EEEE d MMMM")}`}
+              aria-label={`Date: ${isToday ? "today" : format(date, "EEEE d MMMM")}${zoneNote ? `, ${zoneNote}` : ""}`}
             >
               <CalendarIcon className="h-4 w-4" aria-hidden="true" />
               {shortDateLabel === dateLabel ? (
@@ -182,14 +191,24 @@ export default function FiltersPanel({
 
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="outline" size="sm" className={triggerClass} aria-label={`Time: ${displayTime}`}>
+            <Button
+              variant="outline"
+              size="sm"
+              className={triggerClass}
+              aria-label={`Time: ${displayTime}${zoneNote ? `, ${zoneNote}` : ""}`}
+            >
               <Clock className="h-4 w-4" aria-hidden="true" />
               {displayTime}
+              {zoneNote && (
+                <span className="text-xs font-normal text-muted-foreground" aria-hidden="true">
+                  {zoneNote.replace(/ time$/, "")}
+                </span>
+              )}
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-auto p-3" align="start">
             <Label htmlFor="filter-time" className="mb-2 block text-xs text-muted-foreground">
-              Show deals on at
+              Show deals on at{zoneNote ? ` (${zoneNote})` : ""}
             </Label>
             <Input
               id="filter-time"
