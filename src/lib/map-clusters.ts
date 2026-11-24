@@ -2,6 +2,7 @@
 // a Mapbox GeoJSON source with clustering on, then draws its own DOM markers
 // for the clusters and single pins it reports (so every marker can be a real
 // focusable button). These helpers are the parts that don't need a map.
+import type { FeatureCollection, Point } from "geojson";
 import { plural, type SelectionLabel } from "./format";
 
 export const VENUE_SOURCE_ID = "venues";
@@ -30,7 +31,7 @@ export function venuesToFeatureCollection(
   venues: VenuePoint[],
   liveVenueIds: Set<string>,
   excludeId: string | null,
-): GeoJSON.FeatureCollection<GeoJSON.Point, VenueFeatureProps> {
+): FeatureCollection<Point, VenueFeatureProps> {
   return {
     type: "FeatureCollection",
     features: venues
