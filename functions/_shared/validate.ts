@@ -108,3 +108,58 @@ export function validateExtraDeals(
   }
   return null;
 }
+
+/** Max ids/records one admin batch call may touch (a grouped deal is at most 7 days). */
+export const MAX_BATCH_ITEMS = 100;
+
+/** A non-empty array of id strings, capped so one request can't build an unbounded D1 batch. */
+export function validateIdList(ids: unknown, field = "ids"): string | null {
+  if (!Array.isArray(ids) || ids.length === 0) return `${field} required`;
+  if (ids.length > MAX_BATCH_ITEMS) return `too many ${field} (max ${MAX_BATCH_ITEMS})`;
+  if (!ids.every((id) => typeof id === "string" && id.length > 0 && id.length <= 64)) {
+    return `${field} must be non-empty strings`;
+  }
+  return null;
+}
+
+/** Venue lat/lng: both null (no pin yet), or a valid pair. */
+export function isOptionalLatLng(lat: unknown, lng: unknown): boolean {
+  return (lat == null && lng == null) || isLatLng(lat, lng);
+}
+
+/**
+ * Validate a full venue (create / approve). Country is optional; when present
+ * it must be ISO alpha-2 (callers upper-case it to satisfy the DB GLOB CHECK).
+ */
+export function validateVenue(
+  v: { name?: unknown; address?: unknown; country?: unknown; lat?: unknown; lng?: unknown },
+  { requireCoords }: { requireCoords: boolean },
+): string | null {
+  if (!isStringLen(v.name, 200)) return "name is required (max 200)";
+  if (!isStringLen(v.address, 500)) return "address is required (max 500)";
+  if (v.country != null && !isCountryCode(v.country)) return "country must be a 2-letter ISO code";
+  if (requireCoords ? !isLatLng(v.lat, v.lng) : !isOptionalLatLng(v.lat, v.lng)) {
+    return requireCoords ? "lat and lng are required and must be in range" : "lat and lng must be a valid pair or both null";
+  }
+  return null;
+}
+
+/**
+ * Validate a partial venue update (admin PUT). Only keys present are checked;
+ * lat/lng are checked individually since one may be sent without the other.
+ */
+export function validateVenuePatch(p: Record<string, unknown>): string | null {
+  if ("name" in p && !isStringLen(p.name, 200)) return "name must be 1-200 chars";
+  if ("address" in p && !isStringLen(p.address, 500)) return "address must be 1-500 chars";
+  if ("country" in p && p.country != null && !isCountryCode(p.country)) {
+    return "country must be a 2-letter ISO code or null";
+  }
+  const coord = (v: unknown, max: number) =>
+    v == null || (typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= max);
+  if ("lat" in p && !coord(p.lat, 90)) return "lat must be a number in -90..90 or null";
+  if ("lng" in p && !coord(p.lng, 180)) return "lng must be a number in -180..180 or null";
+  if ("status" in p && p.status !== "active" && p.status !== "inactive") {
+    return "status must be 'active' or 'inactive'";
+  }
+  return null;
+}
