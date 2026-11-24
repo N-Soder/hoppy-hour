@@ -88,7 +88,11 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   if (!isStringLen(body.city, 200)) return error("city is required (max 200)", 400);
   if (!isCountryCode(body.country)) return error("country must be a 2-letter ISO code", 400);
   if (!isOptionalStringLen(body.venue_address, 500)) return error("venue_address must be at most 500 chars", 400);
-  if (!isLatLng(body.lat, body.lng)) return error("lat and lng are required", 400);
+  // Coordinates come from the city lookup. They may be absent when the lookup
+  // found no match and the submitter used their typed city; the moderator
+  // places the venue during review. If either is sent, both must be valid.
+  const hasCoords = body.lat != null || body.lng != null;
+  if (hasCoords && !isLatLng(body.lat, body.lng)) return error("lat and lng must both be valid coordinates", 400);
   const fieldErr = validateDealFields(body);
   if (fieldErr) return error(fieldErr, 400);
   const extrasErr = validateExtraDeals(body.extra_deals, MAX_DEALS_PER_SUBMISSION);
@@ -114,8 +118,8 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     body.venue_address && body.venue_address.trim() ? body.venue_address.trim() : "",
     body.city,
     body.country.toUpperCase(),
-    body.lat,
-    body.lng,
+    hasCoords ? body.lat : null,
+    hasCoords ? body.lng : null,
     JSON.stringify(body.days_of_week),
     toHms(body.start_time),
     toHms(body.end_time),

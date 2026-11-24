@@ -1,4 +1,4 @@
-// Time helpers for the "Submit a Hoppy Hour" deal-hours picker.
+// Time helpers for the "Submit a deal" deal-hours picker.
 //
 // The picker works internally in MINUTES SINCE MIDNIGHT of the start day, with
 // past-midnight values continuing past 1440 (12 AM = 1440, 1 AM = 1500,
@@ -10,20 +10,11 @@
 // wraps a picker value back to a clock string on the way to the form: a
 // late-night deal is stored as start > end (22:00 → 01:00), which the map
 // filter and display formatters already understand.
+import { formatClock, formatTimeRange } from "./format";
 
 export const DEAL_MIN = 660; // 11:00 AM
 export const DEAL_MAX = 1560; // 2:00 AM next day
 export const DEAL_STEP = 30;
-
-/** Format minutes-since-midnight as a 12-hour clock label, e.g. 1020 → "5:00 PM". */
-export function formatMinutes(m: number): string {
-  const clock = ((m % 1440) + 1440) % 1440;
-  let h = Math.floor(clock / 60);
-  const min = clock % 60;
-  const ampm = h >= 12 ? "PM" : "AM";
-  h = h % 12 || 12;
-  return `${h}:${String(min).padStart(2, "0")} ${ampm}`;
-}
 
 /** Wrap picker minutes to an 'HH:MM' clock string for storage (1500 → "01:00"). */
 export function minutesToClock(m: number): string {
@@ -33,11 +24,11 @@ export function minutesToClock(m: number): string {
   return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
 
-/** Dropdown options from 11 AM to 2 AM next day in 30-minute steps. */
+/** Dropdown options from 11 am to 2 am next day in 30-minute steps. */
 export const TIME_OPTIONS: { value: number; label: string }[] = (() => {
   const opts: { value: number; label: string }[] = [];
   for (let m = DEAL_MIN; m <= DEAL_MAX; m += DEAL_STEP) {
-    opts.push({ value: m, label: formatMinutes(m) });
+    opts.push({ value: m, label: formatClock(m) });
   }
   return opts;
 })();
@@ -55,15 +46,15 @@ export interface DealPreset {
 }
 
 export const DEAL_PRESETS: DealPreset[] = [
-  { key: "4-6", label: "4–6 PM", start: 960, end: 1080, hint: TWEAK_HINT },
-  { key: "4-7", label: "4–7 PM", start: 960, end: 1140, hint: TWEAK_HINT },
-  { key: "5-6", label: "5–6 PM", start: 1020, end: 1080, hint: TWEAK_HINT },
-  { key: "5-7", label: "5–7 PM", start: 1020, end: 1140, hint: TWEAK_HINT },
+  { key: "4-6", label: formatTimeRange(960, 1080), start: 960, end: 1080, hint: TWEAK_HINT },
+  { key: "4-7", label: formatTimeRange(960, 1140), start: 960, end: 1140, hint: TWEAK_HINT },
+  { key: "5-6", label: formatTimeRange(1020, 1080), start: 1020, end: 1080, hint: TWEAK_HINT },
+  { key: "5-7", label: formatTimeRange(1020, 1140), start: 1020, end: 1140, hint: TWEAK_HINT },
   { key: "all", label: "All day", start: 660, end: 1380, hint: TWEAK_HINT },
   { key: "custom", label: "Custom", start: null, end: null, hint: CUSTOM_HINT },
 ];
 
-/** Neutral default the "Custom" chip pre-fills: 5:00 PM – 6:00 PM. */
+/** Neutral default the "Custom" chip pre-fills: 5–6 pm. */
 export const CUSTOM_DEFAULT_START = 1020;
 export const CUSTOM_DEFAULT_END = 1080;
 

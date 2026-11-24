@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { useTheme } from "next-themes";
-import { Moon, Sun, Monitor, Shield, Plus, Settings, Github, ArrowUpRight } from "lucide-react";
+import { Moon, Sun, Monitor, Plus, Settings, Github, ArrowUpRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { REPO_URL } from "@/lib/constants";
 import {
@@ -15,8 +15,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 /**
- * Header options menu: theme switcher plus secondary navigation (submit /
- * admin) and the source link, so the top bar stays uncluttered on mobile.
+ * Header options menu: theme switcher plus secondary navigation (submit) and
+ * the source link, so the top bar stays uncluttered on mobile. There is
+ * deliberately no admin link: /admin is for the moderators who know it, and
+ * Cloudflare Access gates it at the edge.
  */
 export default function OptionsMenu() {
   const { theme, setTheme } = useTheme();
@@ -30,7 +32,7 @@ export default function OptionsMenu() {
           className="h-9 w-9 text-muted-foreground"
           aria-label="Options"
         >
-          <Settings className="h-4 w-4" />
+          <Settings className="h-5 w-5" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">
@@ -51,14 +53,7 @@ export default function OptionsMenu() {
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
           <Link to="/submit" className="gap-2">
-            <Plus className="h-4 w-4" /> Submit a Deal
-          </Link>
-        </DropdownMenuItem>
-        {/* /admin is gated at the edge by Cloudflare Access, so a visible link
-            is safe — non-admins hit the login wall. */}
-        <DropdownMenuItem asChild>
-          <Link to="/admin" className="gap-2">
-            <Shield className="h-4 w-4" /> Admin
+            <Plus className="h-4 w-4" /> Submit a deal
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
@@ -68,7 +63,8 @@ export default function OptionsMenu() {
         <DropdownMenuItem asChild>
           <a href={REPO_URL} target="_blank" rel="noopener noreferrer" className="gap-2">
             <Github className="h-4 w-4" /> Source code
-            <ArrowUpRight className="ml-auto h-3 w-3 text-muted-foreground" />
+            <ArrowUpRight className="ml-auto h-3 w-3 text-muted-foreground" aria-hidden="true" />
+            <span className="sr-only">(opens in a new tab)</span>
           </a>
         </DropdownMenuItem>
       </DropdownMenuContent>

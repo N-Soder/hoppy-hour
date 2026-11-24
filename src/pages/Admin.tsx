@@ -30,25 +30,36 @@ export default function Admin() {
   }
 
   if (isError) {
-    const expired = isAuthError(error);
+    // 401/403: no (or an expired) Cloudflare Access session — typically after
+    // reaching /admin by a client-side navigation, which never passes through
+    // the Access edge. A full page load of /admin lets Access intercept and
+    // show its sign-in. Anything else is a genuine network/server failure.
+    const signedOut = isAuthError(error);
     return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="max-w-md w-full rounded-lg border border-border bg-card p-6 text-center space-y-3">
-          <h2 className="text-lg font-bold tracking-tight">
-            {expired ? "Your admin session has expired" : "Couldn't reach the admin API"}
-          </h2>
+      <div className="min-h-dvh flex items-center justify-center bg-background p-4">
+        <main className="max-w-md w-full rounded-lg border border-border bg-card p-6 text-center space-y-3">
+          <h1 className="text-lg font-bold tracking-tight">
+            {signedOut ? "Admin sign-in required" : "Couldn't reach the admin API"}
+          </h1>
           <p className="text-sm text-muted-foreground">
-            {expired
-              ? "Reload the page to sign in again through Cloudflare Access."
-              : "This is usually a network hiccup — try reloading."}
+            {signedOut
+              ? "This area is for HoppyHour moderators. Sign in to continue."
+              : "This is usually a network hiccup. Check your connection and try again."}
           </p>
           <div className="flex gap-2 justify-center">
-            <Button onClick={() => window.location.reload()}>Reload</Button>
+            {signedOut ? (
+              <Button asChild>
+                {/* A real document navigation (not a router Link) so Cloudflare Access can intercept it. */}
+                <a href="/admin">Sign in</a>
+              </Button>
+            ) : (
+              <Button onClick={() => window.location.reload()}>Try again</Button>
+            )}
             <Button variant="outline" asChild>
-              <Link to="/">Back to Map</Link>
+              <Link to="/">Back to map</Link>
             </Button>
           </div>
-        </div>
+        </main>
       </div>
     );
   }

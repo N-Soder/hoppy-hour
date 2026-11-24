@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronsUpDown, Loader2, MapPin } from "lucide-react";
+import { Check, ChevronsUpDown, Loader2, MapPin, PenLine } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -21,10 +21,18 @@ interface CitySearchProps {
   /** Restrict results to this ISO 3166-1 alpha-2 country (e.g. "CA"), if the form's country picker has a selection. */
   country?: string;
   id?: string;
+  /**
+   * Called with the typed text when the user chooses to use it as-is because
+   * the lookup found nothing (or failed). The submission then goes in without
+   * coordinates and the moderator places it on the map during review.
+   */
+  onUseTyped?: (text: string) => void;
+  /** A city entered as typed text (no lookup match), shown when `value` is null. */
+  typedValue?: string | null;
 }
 
 /** Type-ahead city picker backed by the Mapbox geocode proxy. */
-export function CitySearch({ value, onChange, proximity, country, id }: CitySearchProps) {
+export function CitySearch({ value, onChange, proximity, country, id, onUseTyped, typedValue }: CitySearchProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CityResult[]>([]);
@@ -65,19 +73,34 @@ export function CitySearch({ value, onChange, proximity, country, id }: CitySear
         >
           {value ? (
             <span className="flex items-center gap-2 truncate">
-              <MapPin className="h-4 w-4 shrink-0 opacity-60" />
+              <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <span className="truncate">{value.label}</span>
+            </span>
+          ) : typedValue ? (
+            <span className="flex items-center gap-2 truncate">
+              <PenLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <span className="truncate">{typedValue}</span>
             </span>
           ) : (
             <span className="text-muted-foreground">Search for a city…</span>
           )}
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
         {/* shouldFilter=false: results are already filtered by Mapbox. */}
         <Command shouldFilter={false}>
-          <CommandInput placeholder="Type a city…" value={query} onValueChange={setQuery} />
+          <CommandInput
+            placeholder="Type a city…"
+            value={query}
+            onValueChange={setQuery}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="words"
+            spellCheck={false}
+            enterKeyHint="search"
+            aria-label="City"
+          />
           <CommandList>
             {loading && (
               <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
@@ -85,7 +108,31 @@ export function CitySearch({ value, onChange, proximity, country, id }: CitySear
               </div>
             )}
             {!loading && query.trim().length >= 2 && results.length === 0 && (
-              <CommandEmpty>No cities found.</CommandEmpty>
+              onUseTyped ? (
+                <>
+                  <div className="px-3 pb-2 pt-4 text-center text-sm text-muted-foreground">
+                    No matching cities found.
+                  </div>
+                  <CommandGroup>
+                    <CommandItem
+                      value={`use-typed-${query.trim()}`}
+                      onSelect={() => {
+                        onUseTyped(query.trim());
+                        setOpen(false);
+                      }}
+                      className="min-h-[44px]"
+                    >
+                      <PenLine className="mr-2 h-4 w-4" aria-hidden="true" />
+                      <span className="truncate">Use “{query.trim()}”</span>
+                    </CommandItem>
+                  </CommandGroup>
+                  <p className="px-3 pb-3 text-xs text-muted-foreground">
+                    We'll pin it on the map when we review your deal.
+                  </p>
+                </>
+              ) : (
+                <CommandEmpty>No cities found.</CommandEmpty>
+              )
             )}
             {!loading && query.trim().length < 2 && (
               <div className="py-6 text-center text-sm text-muted-foreground">

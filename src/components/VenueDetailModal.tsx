@@ -1,40 +1,15 @@
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { MapPin, Clock, Navigation } from "lucide-react";
 import type { VenueWithHappyHours } from "@/hooks/use-venues";
-import { formatDistance, formatTime } from "@/lib/format";
-import { groupHappyHours, formatDayRange, type GroupedHappyHour } from "@/lib/happy-hour-utils";
-
-/**
- * Groups deals that share the exact same days_of_week set under one header,
- * then sorts those sections by their first day (Sun→Sat).
- * Deals within each section are sorted by start_time.
- */
-function groupByDaySet(
-  groups: GroupedHappyHour[]
-): { days: number[]; deals: GroupedHappyHour[] }[] {
-  const map = new Map<string, { days: number[]; deals: GroupedHappyHour[] }>();
-  for (const group of groups) {
-    const key = group.days_of_week.join(",");
-    const existing = map.get(key);
-    if (existing) {
-      existing.deals.push(group);
-    } else {
-      map.set(key, { days: group.days_of_week, deals: [group] });
-    }
-  }
-  return Array.from(map.values())
-    .sort((a, b) => (a.days[0] ?? 0) - (b.days[0] ?? 0))
-    .map(({ days, deals }) => ({
-      days,
-      deals: deals.slice().sort((a, b) => a.start_time.localeCompare(b.start_time)),
-    }));
-}
+import { formatDistance, formatTimeRange, plural } from "@/lib/format";
+import { groupHappyHours, groupByDaySet, formatDayRange } from "@/lib/happy-hour-utils";
 
 interface VenueDetailModalProps {
   venue: VenueWithHappyHours | null;
@@ -50,9 +25,12 @@ export default function VenueDetailModal({ venue, open, onClose }: VenueDetailMo
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="max-h-[80vh] max-w-md overflow-y-auto">
+        <DialogHeader className="pr-8 text-left">
           <DialogTitle className="text-lg">{venue.name}</DialogTitle>
+          <DialogDescription className="sr-only">
+            {plural(grouped.length, "deal")} at this venue, {formatDistance(venue.distance_meters)} away.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
@@ -60,47 +38,45 @@ export default function VenueDetailModal({ venue, open, onClose }: VenueDetailMo
             href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(venue.name + ', ' + venue.address)}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-start gap-2 text-sm text-muted-foreground hover:text-primary transition-colors group"
+            className="group flex items-start gap-2 text-sm text-muted-foreground transition-colors hover:text-primary"
           >
-            <MapPin className="h-4 w-4 mt-0.5 flex-shrink-0" />
-            <span className="underline underline-offset-2 decoration-muted-foreground/40 group-hover:decoration-primary">
+            <MapPin className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
+            <span className="underline decoration-muted-foreground/60 underline-offset-2 group-hover:decoration-primary">
               {venue.address}
             </span>
           </a>
 
           <div className="flex items-center gap-2 text-sm">
-            <Navigation className="h-4 w-4 text-primary" />
-            <span className="font-medium text-primary">
-              {formatDistance(venue.distance_meters)} away
-            </span>
+            <Navigation className="h-4 w-4 text-primary" aria-hidden="true" />
+            <span className="font-medium text-primary">{formatDistance(venue.distance_meters)} away</span>
           </div>
 
-          <div className="border-t border-border pt-4">
-            <h4 className="font-semibold text-sm mb-4">Hoppy Hours</h4>
+          <section className="border-t border-border pt-4" aria-labelledby="venue-deals-heading">
+            <h3 id="venue-deals-heading" className="mb-4 text-sm font-semibold">
+              Deals
+            </h3>
             {byDaySet.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No hoppy hours listed</p>
+              <p className="text-sm text-muted-foreground">No deals listed</p>
             ) : (
               <div className="space-y-5">
                 {byDaySet.map(({ days, deals }) => (
-                  <div key={days.join(",")} className="pl-3 border-l-2 border-primary/30">
+                  <div key={days.join(",")} className="border-l-2 border-primary/30 pl-3">
                     {/* Day range header — rendered once per unique day set */}
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       {formatDayRange(days)}
-                    </p>
+                    </h4>
 
-                    {/* Deals for this day, in time order */}
-                    <div className="space-y-3">
+                    {/* Deals for these days, in time order */}
+                    <ul className="space-y-3">
                       {deals.map((deal) => (
-                        <div key={deal.ids[0]}>
+                        <li key={deal.ids[0]}>
                           <div className="flex items-center gap-1.5 text-sm font-medium">
-                            <Clock className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                            <span>{formatTime(deal.start_time)} – {formatTime(deal.end_time)}</span>
+                            <Clock className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" aria-hidden="true" />
+                            <span>{formatTimeRange(deal.start_time, deal.end_time)}</span>
                           </div>
-                          <p className="text-sm text-muted-foreground mt-0.5 leading-snug">
-                            {deal.description}
-                          </p>
+                          <p className="mt-0.5 text-sm leading-snug text-muted-foreground">{deal.description}</p>
                           {deal.tags && deal.tags.length > 0 && (
-                            <div className="flex gap-1 mt-1.5 flex-wrap">
+                            <div className="mt-1.5 flex flex-wrap gap-1">
                               {deal.tags.map((tag) => (
                                 <Badge key={tag} variant="secondary" className="text-xs capitalize">
                                   {tag}
@@ -108,14 +84,14 @@ export default function VenueDetailModal({ venue, open, onClose }: VenueDetailMo
                               ))}
                             </div>
                           )}
-                        </div>
+                        </li>
                       ))}
-                    </div>
+                    </ul>
                   </div>
                 ))}
               </div>
             )}
-          </div>
+          </section>
         </div>
       </DialogContent>
     </Dialog>
