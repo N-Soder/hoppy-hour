@@ -21,16 +21,29 @@ export function prefersAppleMaps(userAgent: string, maxTouchPoints = 0): boolean
   return mac && safari;
 }
 
-/** Directions URL to the venue, opened in a new tab by the caller. */
+/** "Name, address" (or just the name), so the destination is labelled with the venue. */
+function destinationLabel(target: DirectionsTarget): string {
+  const address = target.address.trim();
+  return address ? `${target.name}, ${address}` : target.name;
+}
+
+/**
+ * Directions URL to the venue, opened in a new tab by the caller.
+ *
+ * The destination is the venue's name and address rather than raw coordinates,
+ * which Maps would show as the destination's title. For Apple Maps the
+ * coordinates go in `sll` (the search location hint), so the name and address
+ * resolve to the venue there rather than to a same-named place elsewhere.
+ * Google Maps' directions URL has no coordinate hint; the name and address are
+ * its documented way to name a destination.
+ */
 export function directionsUrl(target: DirectionsTarget, apple: boolean): string {
+  const coords = `${target.lat},${target.lng}`;
   if (apple) {
-    const p = new URLSearchParams({ daddr: `${target.lat},${target.lng}`, q: target.name });
+    const p = new URLSearchParams({ daddr: destinationLabel(target), sll: coords });
     return `https://maps.apple.com/?${p.toString()}`;
   }
-  const p = new URLSearchParams({
-    api: "1",
-    destination: `${target.name}, ${target.address}`,
-  });
+  const p = new URLSearchParams({ api: "1", destination: destinationLabel(target) });
   return `https://www.google.com/maps/dir/?${p.toString()}`;
 }
 
