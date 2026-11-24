@@ -1,25 +1,36 @@
 // GET  /api/admin/venues        -> list all venues (incl. lat/lng for editing)
 // POST /api/admin/venues        -> create a venue (coords in the same INSERT;
-//                                  no separate location-update call)
+//                                  no separate location-update call). The
+//                                  venue's time zone is derived from its coords.
 import type { Env } from "../../../_shared/db";
 import { nowIso, rowToVenue } from "../../../_shared/db";
 import { error, json, readJson } from "../../../_shared/http";
 import { validateVenue } from "../../../_shared/validate";
+import { withOptionalColumns } from "../../../_shared/schema-compat";
+import { timezoneFor } from "../../../_shared/timezone";
 import type { Venue } from "../../../../src/lib/api-types";
 
 // deal_count counts deals the way the admin editor shows them: records that
 // share times, description, tags and active state are one deal (a daily deal
 // stored as seven per-day rows counts once).
+// timezone_supported tells the editor whether migration 0005 has added the
+// column, so it can hide the time zone field until then.
 export const onRequestGet: PagesFunction<Env> = async ({ env }) => {
-  const { results } = await env.DB.prepare(
-    `SELECT v.id, v.name, v.address, v.country, v.status, v.lat, v.lng,
-            (SELECT COUNT(DISTINCT h.start_time || '|' || h.end_time || '|' || trim(h.description)
-                                   || '|' || h.tags || '|' || h.is_active)
-               FROM happy_hours h WHERE h.venue_id = v.id) AS deal_count
-       FROM venues v ORDER BY v.name`,
-  ).all<Record<string, unknown>>();
+  let timezoneSupported = false;
+  const { results } = await withOptionalColumns(["timezone"], (present) => {
+    timezoneSupported = present.has("timezone");
+    return env.DB.prepare(
+      `SELECT v.id, v.name, v.address, v.country, v.status, v.lat, v.lng,
+              ${present.has("timezone") ? "v.timezone" : "NULL AS timezone"},
+              (SELECT COUNT(DISTINCT h.start_time || '|' || h.end_time || '|' || trim(h.description)
+                                     || '|' || h.tags || '|' || h.is_active)
+                 FROM happy_hours h WHERE h.venue_id = v.id) AS deal_count
+         FROM venues v ORDER BY v.name`,
+    ).all<Record<string, unknown>>();
+  });
   return json({
     venues: (results ?? []).map((r) => ({ ...rowToVenue(r), deal_count: Number(r.deal_count ?? 0) })),
+    timezone_supported: timezoneSupported,
   });
 };
 
@@ -39,10 +50,18 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
   const id = crypto.randomUUID();
   const now = nowIso();
-  await env.DB.prepare(
-    `INSERT INTO venues (id, name, address, country, lat, lng, status, created_at, updated_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7, ?7)`,
-  ).bind(id, b.name, b.address, b.country?.toUpperCase() ?? null, b.lat ?? null, b.lng ?? null, now).run();
+  const timezone = timezoneFor(b.lat, b.lng);
+  // The time zone is stored only once migration 0005 has added its column.
+  await withOptionalColumns(["timezone"], (present) =>
+    env.DB.prepare(
+      `INSERT INTO venues (id, name, address, country, lat, lng, status, created_at, updated_at
+                           ${present.has("timezone") ? ", timezone" : ""})
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7, ?7 ${present.has("timezone") ? ", ?8" : ""})`,
+    ).bind(
+      id, b.name, b.address, b.country?.toUpperCase() ?? null, b.lat ?? null, b.lng ?? null, now,
+      ...(present.has("timezone") ? [timezone] : []),
+    ).run(),
+  );
 
   return json({ id } satisfies Pick<Venue, "id">, 201);
 };

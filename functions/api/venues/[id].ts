@@ -7,6 +7,7 @@ import type { Env } from "../../_shared/db";
 import { rowToHappyHour } from "../../_shared/db";
 import { error, json } from "../../_shared/http";
 import { haversineMeters } from "../../_shared/distance";
+import { withOptionalColumns } from "../../_shared/schema-compat";
 import type { VenueWithHappyHours } from "../../../src/lib/api-types";
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env, params }) => {
@@ -20,10 +21,15 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env, params })
     url.searchParams.get("lat") !== null && url.searchParams.get("lng") !== null &&
     Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
 
-  const venue = await env.DB.prepare(
-    `SELECT id, name, address, country, lat, lng FROM venues
-      WHERE id = ?1 AND status = 'active' AND lat IS NOT NULL AND lng IS NOT NULL`,
-  ).bind(id).first<Record<string, unknown>>();
+  // timezone: null until migration 0005 is applied (see functions/api/venues.ts).
+  const venue = await withOptionalColumns(["timezone"], (present) =>
+    env.DB.prepare(
+      `SELECT id, name, address, country, lat, lng,
+              ${present.has("timezone") ? "timezone" : "NULL AS timezone"}
+         FROM venues
+        WHERE id = ?1 AND status = 'active' AND lat IS NOT NULL AND lng IS NOT NULL`,
+    ).bind(id).first<Record<string, unknown>>(),
+  );
   if (!venue) return error("venue not found", 404);
 
   const { results } = await env.DB.prepare(
@@ -40,6 +46,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env, params })
     country: (venue.country as string | null) ?? null,
     lat: vLat,
     lng: vLng,
+    timezone: (venue.timezone as string | null) ?? null,
     distance_meters: hasOrigin ? haversineMeters(lat, lng, vLat, vLng) : 0,
     happy_hours: (results ?? []).map(rowToHappyHour),
   };

@@ -5,6 +5,7 @@ import type { Env } from "../_shared/db";
 import { rowToHappyHour } from "../_shared/db";
 import { error, json } from "../_shared/http";
 import { haversineMeters } from "../_shared/distance";
+import { withOptionalColumns } from "../_shared/schema-compat";
 import type { HappyHour, VenueWithHappyHours } from "../../src/lib/api-types";
 
 const KM_PER_DEG_LAT = 110.574; // ~constant
@@ -43,16 +44,21 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
 
   // Indexed prefilter + active happy hours in one round trip via LEFT JOIN.
   // (Antimeridian wrap ignored: data is AU/NZ/US/GB/CA.)
-  const { results } = await env.DB.prepare(
-    `SELECT v.id, v.name, v.address, v.country, v.lat, v.lng,
-            h.id AS hh_id, h.venue_id AS hh_venue_id, h.days_of_week, h.start_time,
-            h.end_time, h.description, h.tags, h.is_active
-       FROM venues v
-       LEFT JOIN happy_hours h ON h.venue_id = v.id AND h.is_active = 1
-      WHERE v.status = 'active'
-        AND v.lat BETWEEN ?1 AND ?2
-        AND v.lng BETWEEN ?3 AND ?4`,
-  ).bind(minLat, maxLat, minLng, maxLng).all<Record<string, unknown>>();
+  // timezone comes from migration 0005. Until it is applied the column is left
+  // out and every venue reports null (the client then uses the viewer's zone).
+  const { results } = await withOptionalColumns(["timezone"], (present) =>
+    env.DB.prepare(
+      `SELECT v.id, v.name, v.address, v.country, v.lat, v.lng,
+              ${present.has("timezone") ? "v.timezone" : "NULL AS timezone"},
+              h.id AS hh_id, h.venue_id AS hh_venue_id, h.days_of_week, h.start_time,
+              h.end_time, h.description, h.tags, h.is_active
+         FROM venues v
+         LEFT JOIN happy_hours h ON h.venue_id = v.id AND h.is_active = 1
+        WHERE v.status = 'active'
+          AND v.lat BETWEEN ?1 AND ?2
+          AND v.lng BETWEEN ?3 AND ?4`,
+    ).bind(minLat, maxLat, minLng, maxLng).all<Record<string, unknown>>(),
+  );
 
   const venues = new Map<string, VenueWithHappyHours>();
   for (const r of results ?? []) {
@@ -66,6 +72,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
         country: (r.country as string | null) ?? null,
         lat: r.lat as number,
         lng: r.lng as number,
+        timezone: (r.timezone as string | null) ?? null,
         distance_meters: haversineMeters(lat, lng, r.lat as number, r.lng as number),
         happy_hours: [],
       };

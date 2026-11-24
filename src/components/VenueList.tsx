@@ -11,6 +11,7 @@ import { groupHappyHours, type GroupedHappyHour } from "@/lib/happy-hour-utils";
 import type { EmptyStateCopy } from "@/lib/list-state";
 import { scrollBehavior } from "@/lib/motion";
 import LiveBadge from "@/components/LiveBadge";
+import { ZoneNote } from "@/components/VenueDetail";
 
 interface VenueListProps {
   venues: VenueWithHappyHours[];
@@ -20,6 +21,8 @@ interface VenueListProps {
   liveVenueIds: Set<string>;
   /** "Fri 4–6 pm" for venues with no deal on at the selection. */
   nextDealLabels: Map<string, string>;
+  /** "Perth time" for venues whose clock differs from the viewer's; absent or null otherwise. */
+  zoneNotes?: Map<string, string | null>;
   selection: SelectionLabel;
 }
 
@@ -30,6 +33,7 @@ export default function VenueList({
   filteredHappyHourIds,
   liveVenueIds,
   nextDealLabels,
+  zoneNotes,
   selection,
 }: VenueListProps) {
   const itemRefs = useRef<Map<string, HTMLLIElement>>(new Map());
@@ -49,6 +53,7 @@ export default function VenueList({
         const isSelected = venue.id === selectedVenueId;
         const next = isLive ? null : nextDealLabels.get(venue.id) ?? null;
         const dealCount = groupHappyHours(venue.happy_hours).length;
+        const zoneNote = zoneNotes?.get(venue.id) ?? null;
 
         return (
           <li
@@ -81,6 +86,8 @@ export default function VenueList({
                       {venue.name}
                     </button>
                   </h3>
+                  {/* No zone note here: it would squeeze the name. The filter's
+                      time pill already says which zone "now" is in. */}
                   {isLive && <LiveBadge selection={selection} />}
                 </div>
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">{venue.address}</p>
@@ -114,7 +121,9 @@ export default function VenueList({
             {!isLive && dealCount > 0 && (
               <div className="mt-2.5 flex items-center gap-2 text-xs max-md:pr-12">
                 <CalendarClock className="h-3 w-3 flex-shrink-0 text-muted-foreground" aria-hidden="true" />
-                <span className="min-w-0 flex-1 truncate">
+                {/* Phones: the status, time zone and count sit together on the
+                    left; wider screens keep the count at the right. */}
+                <span className="min-w-0 truncate md:flex-1">
                   {next ? (
                     <>
                       <span className="text-muted-foreground">Next:</span>{" "}
@@ -123,8 +132,11 @@ export default function VenueList({
                   ) : (
                     <span className="text-muted-foreground">No deal matches your filters</span>
                   )}
-                  {/* Phones: the count follows the status on the left. */}
-                  <span className="text-muted-foreground md:hidden"> · {plural(dealCount, "deal")}</span>
+                </span>
+                {next && <ZoneNote note={zoneNote} />}
+                <span className="flex-shrink-0 whitespace-nowrap text-muted-foreground md:hidden">
+                  <span aria-hidden="true">· </span>
+                  {plural(dealCount, "deal")}
                 </span>
                 <span className="flex-shrink-0 whitespace-nowrap text-muted-foreground max-md:hidden">
                   {plural(dealCount, "deal")}
