@@ -1,5 +1,5 @@
 import { useRef, useEffect } from "react";
-import { MapPin, Clock, AlertCircle, RefreshCw, WifiOff } from "lucide-react";
+import { MapPin, Clock, AlertCircle, CalendarClock, RefreshCw, WifiOff } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -18,6 +18,8 @@ interface VenueListProps {
   onSelectVenue: (id: string) => void;
   filteredHappyHourIds: Set<string>;
   liveVenueIds: Set<string>;
+  /** "Fri 4–6 pm" for venues with no deal on at the selection. */
+  nextDealLabels: Map<string, string>;
   selection: SelectionLabel;
 }
 
@@ -27,6 +29,7 @@ export default function VenueList({
   onSelectVenue,
   filteredHappyHourIds,
   liveVenueIds,
+  nextDealLabels,
   selection,
 }: VenueListProps) {
   const itemRefs = useRef<Map<string, HTMLLIElement>>(new Map());
@@ -44,6 +47,8 @@ export default function VenueList({
         const matchingHH = venue.happy_hours.filter((hh) => filteredHappyHourIds.has(hh.id));
         const groupedMatchingHH = groupHappyHours(matchingHH);
         const isSelected = venue.id === selectedVenueId;
+        const next = isLive ? null : nextDealLabels.get(venue.id) ?? null;
+        const dealCount = groupHappyHours(venue.happy_hours).length;
 
         return (
           <li
@@ -60,7 +65,7 @@ export default function VenueList({
                 ? "border-primary bg-accent shadow-[0_6px_18px_-6px_hsl(var(--primary)/0.45)]"
                 : isLive
                   ? "border-primary/25 bg-card shadow-[0_6px_18px_-6px_hsl(var(--primary)/0.3)] hover:border-primary/50"
-                  : "border-border bg-card/50 hover:border-input",
+                  : "border-border bg-card hover:border-input",
             )}
           >
             <div className="flex items-start justify-between gap-2">
@@ -69,6 +74,7 @@ export default function VenueList({
                   <h3 className="min-w-0 truncate text-sm font-semibold">
                     <button
                       type="button"
+                      data-venue-card={venue.id}
                       onClick={() => onSelectVenue(venue.id)}
                       className="text-left after:absolute after:inset-0 after:rounded-xl after:content-[''] focus-visible:outline-none"
                     >
@@ -102,10 +108,21 @@ export default function VenueList({
               </div>
             )}
 
-            {!isLive && venue.happy_hours.length > 0 && (
-              <p className="mt-2 text-xs text-muted-foreground">
-                {plural(groupHappyHours(venue.happy_hours).length, "deal")} listed
-              </p>
+            {!isLive && dealCount > 0 && (
+              <div className="mt-2.5 flex items-center gap-2 text-xs">
+                <CalendarClock className="h-3 w-3 flex-shrink-0 text-muted-foreground" aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate">
+                  {next ? (
+                    <>
+                      <span className="text-muted-foreground">Next:</span>{" "}
+                      <span className="font-semibold tabular-nums">{next}</span>
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground">No deal matches your filters</span>
+                  )}
+                </span>
+                <span className="flex-shrink-0 whitespace-nowrap text-muted-foreground">{plural(dealCount, "deal")}</span>
+              </div>
             )}
           </li>
         );

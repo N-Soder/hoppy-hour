@@ -176,3 +176,56 @@ All colors MUST be HSL.
     display: none;
   }
 }
+
+/* ── Map markers ────────────────────────────────────────────────────────────
+   Venue pins and cluster bubbles are <button>s (see MapView). A visible
+   focus ring, and a 44px hit area on touch however small the pin is drawn. */
+.venue-pin,
+.venue-cluster {
+  cursor: pointer;
+}
+.venue-pin:focus-visible,
+.venue-cluster:focus-visible {
+  outline: 3px solid hsl(var(--ring));
+  outline-offset: 2px;
+  z-index: 4 !important;
+}
+.venue-pin::after,
+.venue-cluster::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  height: 100%;
+  transform: translate(-50%, -50%);
+}
+@media (pointer: coarse) {
+  .venue-pin::after,
+  .venue-cluster::after {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+.venue-cluster-pip {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9999px;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* Horizontal chip rows on phones scroll instead of wrapping; hide the bar. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
