@@ -102,6 +102,27 @@ describe("recording the decision", () => {
   });
 });
 
+describe("decided lists order", () => {
+  it("lists newest decisions first, then undated decisions by submission date", async () => {
+    d1.exec(`
+      INSERT INTO submissions (id, venue_name, venue_address, days_of_week, start_time, end_time, description,
+                               status, created_at, reviewed_by, reviewed_at) VALUES
+        ('old-undated', 'A', '', '[1]', '17:00:00', '18:00:00', 'x', 'rejected', '2026-01-01T00:00:00Z', NULL, NULL),
+        ('new-undated', 'B', '', '[1]', '17:00:00', '18:00:00', 'x', 'rejected', '2026-06-01T00:00:00Z', NULL, NULL),
+        ('decided-early', 'C', '', '[1]', '17:00:00', '18:00:00', 'x', 'rejected', '2026-11-01T00:00:00Z', 'r', '2026-11-02T00:00:00Z'),
+        ('decided-late', 'D', '', '[1]', '17:00:00', '18:00:00', 'x', 'rejected', '2026-03-01T00:00:00Z', 'r', '2026-11-20T00:00:00Z'),
+        ('pending-new', 'E', '', '[1]', '17:00:00', '18:00:00', 'x', 'pending', '2026-11-23T00:00:00Z', NULL, NULL),
+        ('pending-old', 'F', '', '[1]', '17:00:00', '18:00:00', 'x', 'pending', '2026-02-01T00:00:00Z', NULL, NULL);
+    `);
+    const ids = async (status: string) => {
+      const res = await call(listSubmissions, { method: "GET", url: `http://localhost/api/admin/submissions?status=${status}` });
+      return ((await res.json()) as { submissions: { id: string }[] }).submissions.map((s) => s.id);
+    };
+    expect(await ids("rejected")).toEqual(["decided-late", "decided-early", "new-undated", "old-undated"]);
+    expect(await ids("pending")).toEqual(["pending-new", "pending-old"]);
+  });
+});
+
 describe("before migration 0006 is applied", () => {
   beforeEach(() => {
     d1.exec(`ALTER TABLE submissions DROP COLUMN reviewed_at; ALTER TABLE submissions DROP COLUMN reviewed_by;`);
