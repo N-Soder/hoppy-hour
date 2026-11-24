@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { geoBanner, geoStatusForError, hasRealLocation, isLocating } from "@/lib/geo-status";
+import { geoBanner, geoChip, geoStatusForError, hasRealLocation, isLocating } from "@/lib/geo-status";
 
 describe("geoStatusForError", () => {
   it("maps the GeolocationPositionError codes", () => {
@@ -48,5 +48,16 @@ describe("geoBanner", () => {
 
   it("shows nothing once the location is known", () => {
     expect(geoBanner("granted", "Perth", false)).toBeNull();
+  });
+});
+
+describe("geoChip", () => {
+  it("shortens the banner to one line with the same action", () => {
+    expect(geoChip("denied", "Perth", false)).toEqual({ label: "Location off · near Perth", action: "Use my location" });
+    expect(geoChip("denied", "Perth", true)).toEqual({ label: "Location blocked · near Perth", action: "Try again" });
+    expect(geoChip("unsupported", "Perth", false)).toEqual({ label: "No location · near Perth", action: null });
+  });
+  it("is null when there is no banner", () => {
+    expect(geoChip("granted", "Perth", false)).toBeNull();
   });
 });

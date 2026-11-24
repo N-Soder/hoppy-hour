@@ -4,7 +4,8 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
-import { CalendarIcon, Clock, Loader2, MapPin, Search, X } from "lucide-react";
+import { CalendarIcon, Clock, Loader2, MapPin, RotateCcw, Search, X } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
@@ -37,7 +38,19 @@ function isToday(d: Date): boolean {
   return d.toDateString() === new Date().toDateString();
 }
 
-const triggerClass = "gap-2 rounded-full bg-card coarse:h-11";
+function isTomorrow(d: Date): boolean {
+  const t = new Date();
+  t.setDate(t.getDate() + 1);
+  return d.toDateString() === t.toDateString();
+}
+
+// Pills are 40px tall; the Button primitive's touch-target grows the hit area
+// to 44px on touch screens.
+const triggerClass = "h-10 flex-shrink-0 gap-1.5 rounded-full bg-card px-2.5 md:px-3.5";
+// Rows that scroll sideways on phones: bleed to the screen edges, keep room
+// above and below for the 44px hit areas (overflow-x clips them otherwise).
+const scrollRowClass =
+  "no-scrollbar -mx-4 flex flex-nowrap items-center overflow-x-auto px-4 md:mx-0 md:overflow-visible md:px-0";
 
 export default function FiltersPanel({
   date,
@@ -59,7 +72,9 @@ export default function FiltersPanel({
   const { toast } = useToast();
 
   const displayTime = formatClock(time);
-  const dateLabel = isToday(date) ? "Today" : format(date, "EEE d MMM");
+  const dateLabel = isToday(date) ? "Today" : isTomorrow(date) ? "Tomorrow" : format(date, "EEE d MMM");
+  // Phones: "Sat 28" keeps the when/where row on one line with "Now" showing.
+  const shortDateLabel = isToday(date) || isTomorrow(date) ? dateLabel : format(date, "EEE d");
 
   const toggleTag = (tag: string) => {
     onTagsChange(
@@ -97,10 +112,10 @@ export default function FiltersPanel({
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
       {/* Search: filters venues by name/address as you type; Enter looks the
           text up as a place. */}
-      <div className="relative w-full sm:w-auto sm:min-w-[240px]">
+      <div className="relative w-full md:w-auto md:min-w-[240px]">
         <Label htmlFor="venue-search" className="sr-only">
           Search venues, or press Enter to find a place
         </Label>
@@ -122,7 +137,7 @@ export default function FiltersPanel({
           value={searchQuery}
           onChange={(e) => onSearchQueryChange(e.target.value)}
           onKeyDown={handleSearchKeyDown}
-          className="h-10 rounded-full bg-card pl-10 pr-11 coarse:h-11"
+          className="h-11 rounded-full bg-card pl-10 pr-11 md:h-10"
           disabled={geocoding}
         />
         {searchQuery && !geocoding && (
@@ -130,7 +145,7 @@ export default function FiltersPanel({
             type="button"
             variant="ghost"
             size="icon"
-            className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2 rounded-full text-muted-foreground hover:text-foreground"
+            className="absolute right-1 top-1/2 h-9 w-9 -translate-y-1/2 rounded-full text-muted-foreground hover:text-foreground"
             onClick={() => onSearchQueryChange("")}
             aria-label="Clear search"
           >
@@ -139,89 +154,103 @@ export default function FiltersPanel({
         )}
       </div>
 
-      {/* Date */}
-      <Popover>
-        <PopoverTrigger asChild>
+      {/* When and where: one row, never wraps (scrolls sideways if it must). */}
+      <div className={cn(scrollRowClass, "gap-1.5 py-0.5 -my-0.5 md:gap-2")} role="group" aria-label="When and how far">
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className={triggerClass}
+              aria-label={`Date: ${isToday(date) ? "today" : format(date, "EEEE d MMMM")}`}
+            >
+              <CalendarIcon className="h-4 w-4" aria-hidden="true" />
+              {shortDateLabel === dateLabel ? (
+                dateLabel
+              ) : (
+                <>
+                  <span className="md:hidden">{shortDateLabel}</span>
+                  <span className="hidden md:inline">{dateLabel}</span>
+                </>
+              )}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-0" align="start">
+            <Calendar mode="single" selected={date} onSelect={(d) => d && onDateChange(d)} weekStartsOn={1} />
+          </PopoverContent>
+        </Popover>
+
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline" size="sm" className={triggerClass} aria-label={`Time: ${displayTime}`}>
+              <Clock className="h-4 w-4" aria-hidden="true" />
+              {displayTime}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-3" align="start">
+            <Label htmlFor="filter-time" className="mb-2 block text-xs text-muted-foreground">
+              Show deals on at
+            </Label>
+            <Input
+              id="filter-time"
+              type="time"
+              value={time}
+              onChange={(e) => onTimeChange(e.target.value)}
+              className="w-[140px] coarse:h-11"
+            />
+          </PopoverContent>
+        </Popover>
+
+        <Popover open={radiusOpen} onOpenChange={setRadiusOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className={triggerClass}
+              aria-label={`Distance: within ${formatDistanceRadius(radius)}`}
+            >
+              <MapPin className="h-4 w-4" aria-hidden="true" />
+              {formatDistanceRadius(radius)}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-3" align="start">
+            <div className="flex gap-2" role="group" aria-label="Distance">
+              {RADIUS_OPTIONS.map((value) => (
+                <Chip
+                  key={value}
+                  size="sm"
+                  selected={radius === value}
+                  onClick={() => { onRadiusChange(value); setRadiusOpen(false); }}
+                >
+                  {formatDistanceRadius(value)}
+                </Chip>
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
+
+        {!isNow && (
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
-            className={triggerClass}
-            aria-label={`Date: ${isToday(date) ? "today" : format(date, "EEEE d MMMM")}`}
+            className="h-10 flex-shrink-0 gap-1 rounded-full px-2.5 text-primary"
+            onClick={onResetToNow}
+            aria-label="Back to now"
           >
-            <CalendarIcon className="h-4 w-4" aria-hidden="true" />
-            {dateLabel}
+            <RotateCcw className="h-4 w-4" aria-hidden="true" />
+            Now
           </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-auto p-0" align="start">
-          <Calendar mode="single" selected={date} onSelect={(d) => d && onDateChange(d)} />
-        </PopoverContent>
-      </Popover>
+        )}
+      </div>
 
-      {/* Time */}
-      <Popover>
-        <PopoverTrigger asChild>
-          <Button variant="outline" size="sm" className={triggerClass} aria-label={`Time: ${displayTime}`}>
-            <Clock className="h-4 w-4" aria-hidden="true" />
-            {displayTime}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-auto p-3" align="start">
-          <Label htmlFor="filter-time" className="mb-2 block text-xs text-muted-foreground">
-            Show deals on at
-          </Label>
-          <Input
-            id="filter-time"
-            type="time"
-            value={time}
-            onChange={(e) => onTimeChange(e.target.value)}
-            className="w-[140px] coarse:h-11"
-          />
-        </PopoverContent>
-      </Popover>
-
-      {!isNow && (
-        <Button variant="ghost" size="sm" className="rounded-full text-primary coarse:h-11" onClick={onResetToNow}>
-          Back to now
-        </Button>
-      )}
-
-      {/* Radius */}
-      <Popover open={radiusOpen} onOpenChange={setRadiusOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant="outline"
-            size="sm"
-            className={triggerClass}
-            aria-label={`Distance: within ${formatDistanceRadius(radius)}`}
-          >
-            <MapPin className="h-4 w-4" aria-hidden="true" />
-            {formatDistanceRadius(radius)}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-auto p-3" align="start">
-          <div className="flex gap-2" role="group" aria-label="Distance">
-            {RADIUS_OPTIONS.map((value) => (
-              <Chip
-                key={value}
-                size="sm"
-                selected={radius === value}
-                onClick={() => { onRadiusChange(value); setRadiusOpen(false); }}
-              >
-                {formatDistanceRadius(value)}
-              </Chip>
-            ))}
-          </div>
-        </PopoverContent>
-      </Popover>
-
-      {/* Deal types */}
-      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Deal type">
+      {/* Deal types: one row on phones, scrolling sideways. */}
+      <div className={cn(scrollRowClass, "gap-1.5 py-1.5 -my-1.5 md:flex-wrap")} role="group" aria-label="Deal type">
         {TAG_OPTIONS.map((tag) => (
           <Chip
             key={tag}
             size="sm"
             selected={selectedTags.includes(tag)}
-            className="capitalize"
+            className="flex-shrink-0 capitalize"
             onClick={() => toggleTag(tag)}
           >
             {tag}

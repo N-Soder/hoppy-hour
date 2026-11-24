@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import type { HappyHour, VenueWithHappyHours } from "@/lib/api-types";
 
 // Re-exported so existing importers (components, tests) keep their import paths.
@@ -26,6 +26,29 @@ export function useVenuesWithinRadius(
     },
     enabled: lng !== null && lat !== null,
     staleTime: STALE_TIME,
+  });
+}
+
+/**
+ * One venue by id, for a link to a venue that is not in the loaded list (it
+ * may be outside the viewer's radius). Distance is measured from (lng, lat).
+ * Resolves to null when the venue does not exist or is not active.
+ */
+export function useVenue(id: string | null, lng: number | null, lat: number | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ["venue", id, lng, lat],
+    queryFn: async () => {
+      const origin = lng !== null && lat !== null ? `?lng=${lng}&lat=${lat}` : "";
+      try {
+        return await api.get<VenueWithHappyHours>(`/api/venues/${encodeURIComponent(id!)}${origin}`);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return null;
+        throw e;
+      }
+    },
+    enabled: enabled && !!id,
+    staleTime: STALE_TIME,
+    retry: 1,
   });
 }
 

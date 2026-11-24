@@ -4,22 +4,12 @@
 import type { Env } from "../_shared/db";
 import { rowToHappyHour } from "../_shared/db";
 import { error, json } from "../_shared/http";
+import { haversineMeters } from "../_shared/distance";
 import type { HappyHour, VenueWithHappyHours } from "../../src/lib/api-types";
 
-const EARTH_RADIUS_M = 6_371_000;
 const KM_PER_DEG_LAT = 110.574; // ~constant
 const KM_PER_DEG_LNG_EQ = 111.320; // at the equator; scale by cos(lat)
 const MAX_RADIUS_M = 25_000; // UI max is 10 km (FiltersPanel) — cap generously
-
-function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLng = toRad(lng2 - lng1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-  return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(a));
-}
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   const url = new URL(request.url);

@@ -4,8 +4,9 @@
 //
 // House style for times: lower-case "am"/"pm", ":00" dropped ("5 pm"), an en
 // dash between range ends with no spaces, the meridiem repeated only when the
-// two ends differ ("5–6 pm", "11:30 am–2 pm", "10 pm–2 am"), and "All day" for
-// a deal stored as 00:00–23:59.
+// two ends differ ("5–6 pm", "11:30 am–2 pm", "10 pm–2 am"), "All day" for
+// a deal stored as 00:00–23:59, and "late" for any other deal that runs to
+// 23:59 ("5 pm–late") — 23:59 is how the data says "until close".
 import { DAYS_SHORT } from "./constants";
 
 const MINUTES_PER_DAY = 1440;
@@ -45,14 +46,20 @@ export function isAllDay(start: string | number, end: string | number): boolean 
   return toMinutes(start) === 0 && toMinutes(end) >= MINUTES_PER_DAY - 1;
 }
 
+/** True for an end time of 23:59: the deal runs until close. */
+export function endsLate(end: string | number): boolean {
+  return toMinutes(end) === MINUTES_PER_DAY - 1;
+}
+
 /**
- * A deal's time range: "5–6 pm", "11:30 am–2 pm", "10 pm–2 am", "All day".
+ * A deal's time range: "5 pm–late" (ends 23:59), "5–6 pm", "11:30 am–2 pm", "10 pm–2 am", "All day".
  * Accepts clock strings or minutes since midnight. A range whose end is at or
  * before its start crosses midnight, so both ends always carry their meridiem.
  */
 export function formatTimeRange(start: string | number, end: string | number): string {
   if (isAllDay(start, end)) return "All day";
   const s = clockParts(start);
+  if (endsLate(end)) return `${s.hm} ${s.meridiem}–late`;
   const e = clockParts(end);
   const crossesMidnight = toMinutes(end) <= toMinutes(start);
   if (!crossesMidnight && s.meridiem === e.meridiem) {

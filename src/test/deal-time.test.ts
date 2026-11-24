@@ -6,7 +6,9 @@ import {
   DEAL_MIN,
   DEAL_MAX,
   DEAL_PRESETS,
+  migrateLegacyAllDay,
 } from "@/lib/deal-time";
+import { formatTimeRange } from "@/lib/format";
 
 describe("picker labels use the shared clock format", () => {
   it("labels past-midnight picker values", () => {
@@ -75,8 +77,30 @@ describe("DEAL_PRESETS", () => {
 
   it("carries the spec's preset minute values", () => {
     const all = DEAL_PRESETS.find((p) => p.key === "all")!;
-    expect([all.start, all.end]).toEqual([660, 1380]);
+    // A true all-day range, so it stores 00:00–23:59 and reads "All day".
+    expect([all.start, all.end]).toEqual([0, 1439]);
+    expect([minutesToClock(all.start!), minutesToClock(all.end!)]).toEqual(["00:00", "23:59"]);
+    expect(formatTimeRange(all.start!, all.end!)).toBe("All day");
     const custom = DEAL_PRESETS.find((p) => p.key === "custom")!;
     expect([custom.start, custom.end]).toEqual([null, null]);
+  });
+});
+
+describe("migrateLegacyAllDay", () => {
+  const legacy = { activePreset: "all", startMin: 660, endMin: 1380, start_time: "11:00", end_time: "23:00" };
+
+  it("turns an old 11 am–11 pm All day draft into a true all-day range", () => {
+    expect(migrateLegacyAllDay(legacy)).toEqual({
+      activePreset: "all",
+      startMin: 0,
+      endMin: 1439,
+      start_time: "00:00",
+      end_time: "23:59",
+    });
+  });
+
+  it("leaves a custom 11 am–11 pm deal alone", () => {
+    const custom = { ...legacy, activePreset: "custom" };
+    expect(migrateLegacyAllDay(custom)).toBe(custom);
   });
 });
