@@ -20,16 +20,22 @@
 //    the pre-existing venue!), reactivate the deals we deactivated (preflight
 //    requires them active, so restoring is_active=1 is faithful), and restore
 //    the venue fields captured at preflight if we applied a venue_update.
+//
+// Also recorded: the venue's time zone (from its coordinates, migration 0005)
+// and who approved the submission and when (migration 0006). Each of those
+// columns is written only if the database has it, so approval works before
+// either migration is applied.
 import type { Env } from "../../../../_shared/db";
 import { nowIso, toHms } from "../../../../_shared/db";
 import { error, json, readJson } from "../../../../_shared/http";
 import { normalizeTags, validateDealFields, isStringLen } from "../../../../_shared/validate";
 import { withOptionalColumns } from "../../../../_shared/schema-compat";
 import { timezoneFor } from "../../../../_shared/timezone";
+import { REVIEW_COLUMNS, reviewAssignments, reviewerOf } from "../../../../_shared/review";
 import { MAX_DEALS_PER_SUBMISSION, type ApproveInput } from "../../../../../src/lib/api-types";
 
 /** Columns from migrations that may not be applied yet (written only when present). */
-const OPTIONAL_COLUMNS = ["timezone"] as const;
+const OPTIONAL_COLUMNS = ["timezone", ...REVIEW_COLUMNS] as const;
 type OptionalColumn = (typeof OPTIONAL_COLUMNS)[number];
 
 interface VenueRow {
@@ -51,7 +57,7 @@ function validateVenueFields(v: NonNullable<ApproveInput["venue"]>, label: strin
   return null;
 }
 
-export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }) => {
+export const onRequestPost: PagesFunction<Env> = async ({ request, env, params, data }) => {
   const id = params.id as string;
   const b = await readJson<ApproveInput>(request);
   if (!b || !Array.isArray(b.happy_hours) || b.happy_hours.length === 0) {
@@ -149,8 +155,10 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
     })),
   );
 
-  // Name/address recorded back onto the submission for the audit trail.
+  // Name/address recorded back onto the submission for the audit trail, with
+  // who approved it and when (migration 0006 columns, when present).
   const recordedVenue = hasVenue ? b.venue! : (b.venue_update ?? existingVenue!);
+  const review = { by: reviewerOf(data), at: now };
 
   // Time zone from the venue's coordinates: always for a new venue; for an
   // existing one only when its coordinates change (or it has none yet), so a
@@ -207,15 +215,17 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
         ).bind(targetVenueId, now, ...replacesIds),
       );
     }
+    const reviewSet = reviewAssignments(present, 11, review);
     statements.push(
       env.DB.prepare(
         `UPDATE submissions
             SET status = 'approved', venue_id = ?10, venue_name = ?2, venue_address = ?3,
                 days_of_week = ?4, start_time = ?5, end_time = ?6, description = ?7, tags = ?8,
-                extra_deals = ?9
+                extra_deals = ?9${reviewSet.sql}
           WHERE id = ?1 AND status = 'pending'`,
       ).bind(id, recordedVenue.name, recordedVenue.address, first.days_of_week, first.start_time,
-             first.end_time, first.description, first.tags, extraDeals, targetVenueId),
+             first.end_time, first.description, first.tags, extraDeals, targetVenueId,
+             ...reviewSet.binds),
     );
     return statements;
   };

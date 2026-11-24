@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ToastAction } from "@/components/ui/toast";
 import { useToast } from "@/hooks/use-toast";
-import { dealsOf, formatShortDate, locationLabel, readableError } from "@/lib/admin";
+import { dealsOf, decisionLabel, formatShortDate, locationLabel, readableError } from "@/lib/admin";
 import type { Submission } from "@/lib/api-types";
 import { AdminErrorState, AdminLoading } from "./AdminStates";
 import ReviewDialog from "./ReviewDialog";
@@ -156,6 +156,14 @@ export default function SubmissionQueue() {
                         <Badge variant={sub.status === "approved" ? "default" : "secondary"}>
                           {sub.status === "approved" ? "Approved" : "Rejected"}
                         </Badge>
+                      )}
+                      {decisionLabel(sub) && (
+                        <span
+                          className="max-w-[14rem] break-words text-xs text-muted-foreground"
+                          title={sub.reviewed_at ? new Date(sub.reviewed_at).toLocaleString() : undefined}
+                        >
+                          {sub.status === "approved" ? "Approved" : "Rejected"} {decisionLabel(sub)}
+                        </span>
                       )}
                       <span className="text-xs text-muted-foreground">Submitted {formatShortDate(sub.created_at)}</span>
                     </div>

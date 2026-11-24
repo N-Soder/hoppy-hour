@@ -89,6 +89,13 @@ export interface Submission {
   /** Existing venue this submission was attached to at approval (null = new venue / not approved). */
   venue_id: string | null;
   created_at: string;
+  /**
+   * Cloudflare Access identity that approved or rejected it. Null while
+   * pending, for decisions made before migration 0006, or before it is applied.
+   */
+  reviewed_by?: string | null;
+  /** When it was approved or rejected (ISO UTC); null in the same cases. */
+  reviewed_at?: string | null;
 }
 
 /** Body for POST /api/submissions (public form). */

@@ -45,6 +45,22 @@ export function formatShortDate(iso: string): string {
 }
 
 /**
+ * "24 Nov 2026 by sam@example.com" for an approved or rejected submission,
+ * from the reviewer and decision time recorded since migration 0006. Null
+ * when nothing was recorded (pending, or decided before the migration), so
+ * older rows show nothing extra.
+ */
+export function decisionLabel(sub: Pick<Submission, "status" | "reviewed_by" | "reviewed_at">): string | null {
+  if (sub.status === "pending") return null;
+  const when = sub.reviewed_at ? formatShortDate(sub.reviewed_at) : null;
+  const who = sub.reviewed_by?.trim() || null;
+  if (when && who) return `${when} by ${who}`;
+  if (when) return when;
+  if (who) return `by ${who}`;
+  return null;
+}
+
+/**
  * Geocode query for a submission: the street address enriched with the stored
  * city + country. "5 Main St" is ambiguous; "5 Main St, Fremantle, Australia"
  * isn't, and a city with no street address still finds the city centre.

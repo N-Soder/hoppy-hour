@@ -91,5 +91,9 @@ export function rowToSubmission(r: Record<string, unknown>): Submission {
     image_key: (r.image_key as string | null) ?? null,
     venue_id: (r.venue_id as string | null) ?? null,
     created_at: r.created_at as string,
+    // Columns from migration 0006; null for undecided rows, rows decided
+    // before it ran, and databases it hasn't reached.
+    reviewed_by: (r.reviewed_by as string | null | undefined) ?? null,
+    reviewed_at: (r.reviewed_at as string | null | undefined) ?? null,
   };
 }
