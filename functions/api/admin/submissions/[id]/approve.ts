@@ -24,7 +24,13 @@ import type { Env } from "../../../../_shared/db";
 import { nowIso, toHms } from "../../../../_shared/db";
 import { error, json, readJson } from "../../../../_shared/http";
 import { normalizeTags, validateDealFields, isStringLen } from "../../../../_shared/validate";
+import { withOptionalColumns } from "../../../../_shared/schema-compat";
+import { timezoneFor } from "../../../../_shared/timezone";
 import { MAX_DEALS_PER_SUBMISSION, type ApproveInput } from "../../../../../src/lib/api-types";
+
+/** Columns from migrations that may not be applied yet (written only when present). */
+const OPTIONAL_COLUMNS = ["timezone"] as const;
+type OptionalColumn = (typeof OPTIONAL_COLUMNS)[number];
 
 interface VenueRow {
   id: string;
@@ -33,6 +39,7 @@ interface VenueRow {
   country: string | null;
   lat: number | null;
   lng: number | null;
+  timezone: string | null;
 }
 
 function validateVenueFields(v: NonNullable<ApproveInput["venue"]>, label: string): Response | null {
@@ -98,9 +105,13 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
   // here also gives us the pre-update field values for race compensation.
   let existingVenue: VenueRow | null = null;
   if (hasVenueId) {
-    existingVenue = await env.DB.prepare(
-      `SELECT id, name, address, country, lat, lng FROM venues WHERE id = ?1`,
-    ).bind(b.venue_id).first<VenueRow>();
+    existingVenue = await withOptionalColumns(["timezone"], (present) =>
+      env.DB.prepare(
+        `SELECT id, name, address, country, lat, lng,
+                ${present.has("timezone") ? "timezone" : "NULL AS timezone"}
+           FROM venues WHERE id = ?1`,
+      ).bind(b.venue_id).first<VenueRow>(),
+    );
     if (!existingVenue) return error("venue not found", 404);
 
     if (replacesIds.length > 0) {
@@ -141,54 +152,79 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
   // Name/address recorded back onto the submission for the audit trail.
   const recordedVenue = hasVenue ? b.venue! : (b.venue_update ?? existingVenue!);
 
-  const statements: D1PreparedStatement[] = [];
-  if (hasVenue) {
-    const v = b.venue!;
-    statements.push(
-      env.DB.prepare(
-        `INSERT INTO venues (id, name, address, country, lat, lng, status, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7, ?7)`,
-      ).bind(newVenueId, v.name, v.address, v.country ?? null, v.lat, v.lng, now),
-    );
-  } else if (b.venue_update) {
-    const v = b.venue_update;
-    statements.push(
-      env.DB.prepare(
-        `UPDATE venues SET name = ?2, address = ?3, country = ?4, lat = ?5, lng = ?6, updated_at = ?7
-          WHERE id = ?1`,
-      ).bind(targetVenueId, v.name, v.address, v.country ?? null, v.lat, v.lng, now),
-    );
-  }
-  statements.push(
-    ...deals.map((d) =>
-      env.DB.prepare(
-        `INSERT INTO happy_hours (id, venue_id, days_of_week, start_time, end_time,
-                                  description, tags, is_active, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?8)`,
-      ).bind(d.id, targetVenueId, d.days_of_week, d.start_time, d.end_time, d.description, d.tags, now),
-    ),
-  );
-  if (replacesIds.length > 0) {
-    const placeholders = replacesIds.map((_, i) => `?${i + 3}`).join(",");
-    statements.push(
-      env.DB.prepare(
-        `UPDATE happy_hours SET is_active = 0, updated_at = ?2
-          WHERE venue_id = ?1 AND id IN (${placeholders})`,
-      ).bind(targetVenueId, now, ...replacesIds),
-    );
-  }
-  statements.push(
-    env.DB.prepare(
-      `UPDATE submissions
-          SET status = 'approved', venue_id = ?10, venue_name = ?2, venue_address = ?3,
-              days_of_week = ?4, start_time = ?5, end_time = ?6, description = ?7, tags = ?8,
-              extra_deals = ?9
-        WHERE id = ?1 AND status = 'pending'`,
-    ).bind(id, recordedVenue.name, recordedVenue.address, first.days_of_week, first.start_time,
-           first.end_time, first.description, first.tags, extraDeals, targetVenueId),
-  );
+  // Time zone from the venue's coordinates: always for a new venue; for an
+  // existing one only when its coordinates change (or it has none yet), so a
+  // zone an admin corrected by hand survives an unrelated approval.
+  const newVenueZone = hasVenue ? timezoneFor(b.venue!.lat, b.venue!.lng) : null;
+  const updateZone =
+    b.venue_update && existingVenue &&
+    (b.venue_update.lat !== existingVenue.lat || b.venue_update.lng !== existingVenue.lng || !existingVenue.timezone)
+      ? timezoneFor(b.venue_update.lat, b.venue_update.lng)
+      : undefined;
 
-  const batchResult = await env.DB.batch(statements);
+  // Optional columns (added by migrations that may not be applied yet) are
+  // written only when present; see functions/_shared/schema-compat.ts.
+  const buildStatements = (present: ReadonlySet<OptionalColumn>): D1PreparedStatement[] => {
+    const withZone = present.has("timezone");
+    const statements: D1PreparedStatement[] = [];
+    if (hasVenue) {
+      const v = b.venue!;
+      statements.push(
+        env.DB.prepare(
+          `INSERT INTO venues (id, name, address, country, lat, lng, status, created_at, updated_at
+                               ${withZone ? ", timezone" : ""})
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7, ?7 ${withZone ? ", ?8" : ""})`,
+        ).bind(newVenueId, v.name, v.address, v.country ?? null, v.lat, v.lng, now,
+               ...(withZone ? [newVenueZone] : [])),
+      );
+    } else if (b.venue_update) {
+      const v = b.venue_update;
+      const setZone = withZone && updateZone !== undefined;
+      statements.push(
+        env.DB.prepare(
+          `UPDATE venues SET name = ?2, address = ?3, country = ?4, lat = ?5, lng = ?6, updated_at = ?7
+                             ${setZone ? ", timezone = ?8" : ""}
+            WHERE id = ?1`,
+        ).bind(targetVenueId, v.name, v.address, v.country ?? null, v.lat, v.lng, now,
+               ...(setZone ? [updateZone] : [])),
+      );
+    }
+    statements.push(
+      ...deals.map((d) =>
+        env.DB.prepare(
+          `INSERT INTO happy_hours (id, venue_id, days_of_week, start_time, end_time,
+                                    description, tags, is_active, created_at, updated_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?8)`,
+        ).bind(d.id, targetVenueId, d.days_of_week, d.start_time, d.end_time, d.description, d.tags, now),
+      ),
+    );
+    if (replacesIds.length > 0) {
+      const placeholders = replacesIds.map((_, i) => `?${i + 3}`).join(",");
+      statements.push(
+        env.DB.prepare(
+          `UPDATE happy_hours SET is_active = 0, updated_at = ?2
+            WHERE venue_id = ?1 AND id IN (${placeholders})`,
+        ).bind(targetVenueId, now, ...replacesIds),
+      );
+    }
+    statements.push(
+      env.DB.prepare(
+        `UPDATE submissions
+            SET status = 'approved', venue_id = ?10, venue_name = ?2, venue_address = ?3,
+                days_of_week = ?4, start_time = ?5, end_time = ?6, description = ?7, tags = ?8,
+                extra_deals = ?9
+          WHERE id = ?1 AND status = 'pending'`,
+      ).bind(id, recordedVenue.name, recordedVenue.address, first.days_of_week, first.start_time,
+             first.end_time, first.description, first.tags, extraDeals, targetVenueId),
+    );
+    return statements;
+  };
+
+  let presentColumns: ReadonlySet<OptionalColumn> = new Set();
+  const batchResult = await withOptionalColumns(OPTIONAL_COLUMNS, (present) => {
+    presentColumns = present;
+    return env.DB.batch(buildStatements(present));
+  });
 
   // The status UPDATE is the last statement. If it changed 0 rows, another
   // approval won the race between our preflight and the batch — undo our writes.
@@ -212,12 +248,15 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
         );
       }
       if (b.venue_update && existingVenue) {
+        const restoreZone = presentColumns.has("timezone") && updateZone !== undefined;
         compensations.push(
           env.DB.prepare(
             `UPDATE venues SET name = ?2, address = ?3, country = ?4, lat = ?5, lng = ?6, updated_at = ?7
+                               ${restoreZone ? ", timezone = ?8" : ""}
               WHERE id = ?1`,
           ).bind(existingVenue.id, existingVenue.name, existingVenue.address,
-                 existingVenue.country, existingVenue.lat, existingVenue.lng, nowIso()),
+                 existingVenue.country, existingVenue.lat, existingVenue.lng, nowIso(),
+                 ...(restoreZone ? [existingVenue.timezone] : [])),
         );
       }
       await env.DB.batch(compensations);

@@ -12,6 +12,8 @@ export interface Venue {
   lat: number | null;
   lng: number | null;
   status: "active" | "inactive";
+  /** IANA time zone derived from lat/lng (null when unknown or before migration 0005). */
+  timezone?: string | null;
   /** Admin list only: deals as grouped in the editor (see GET /api/admin/venues). */
   deal_count?: number;
 }
@@ -34,6 +36,12 @@ export interface VenueWithHappyHours {
   country: string | null;
   lat: number;
   lng: number;
+  /**
+   * IANA time zone the venue's deal times are in ("Australia/Perth"), derived
+   * from lat/lng on the server. Null when unknown (lookup failed, or migration
+   * 0005 not applied yet): the client then uses the viewer's own zone.
+   */
+  timezone: string | null;
   distance_meters: number;
   happy_hours: HappyHour[];
 }

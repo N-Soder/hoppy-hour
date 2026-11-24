@@ -64,6 +64,8 @@ export function rowToVenue(r: Record<string, unknown>): Venue {
     lat: (r.lat as number | null) ?? null,
     lng: (r.lng as number | null) ?? null,
     status: r.status as Venue["status"],
+    // Column from migration 0005; null for rows read before it ran.
+    timezone: (r.timezone as string | null | undefined) ?? null,
   };
 }
 
