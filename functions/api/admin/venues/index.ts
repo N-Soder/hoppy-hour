@@ -7,11 +7,20 @@ import { error, json, readJson } from "../../../_shared/http";
 import { validateVenue } from "../../../_shared/validate";
 import type { Venue } from "../../../../src/lib/api-types";
 
+// deal_count counts deals the way the admin editor shows them: records that
+// share times, description, tags and active state are one deal (a daily deal
+// stored as seven per-day rows counts once).
 export const onRequestGet: PagesFunction<Env> = async ({ env }) => {
   const { results } = await env.DB.prepare(
-    `SELECT id, name, address, country, status, lat, lng FROM venues ORDER BY name`,
+    `SELECT v.id, v.name, v.address, v.country, v.status, v.lat, v.lng,
+            (SELECT COUNT(DISTINCT h.start_time || '|' || h.end_time || '|' || trim(h.description)
+                                   || '|' || h.tags || '|' || h.is_active)
+               FROM happy_hours h WHERE h.venue_id = v.id) AS deal_count
+       FROM venues v ORDER BY v.name`,
   ).all<Record<string, unknown>>();
-  return json({ venues: (results ?? []).map(rowToVenue) });
+  return json({
+    venues: (results ?? []).map((r) => ({ ...rowToVenue(r), deal_count: Number(r.deal_count ?? 0) })),
+  });
 };
 
 interface VenueBody {
