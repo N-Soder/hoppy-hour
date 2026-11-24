@@ -1,3 +1,4 @@
+import { createElement, type ComponentProps } from "react";
 import { describe, it, expect } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -27,20 +28,24 @@ const venue: VenueWithHappyHours = {
 
 const selection: SelectionLabel = { isNow: true, badge: "Live", phrase: "now" };
 
-function renderDetail(selectedDay: number, selectedIsToday: boolean) {
-  render(
-    <MemoryRouter>
-      <VenueDetail
-        venue={venue}
-        status={{ isLive: false, liveCount: 0, nextLabel: null, dealCount: 3 }}
-        selection={selection}
-        filteredHappyHourIds={new Set()}
-        selectedDay={selectedDay}
-        selectedIsToday={selectedIsToday}
-        headingId="t"
-      />
-    </MemoryRouter>,
-  );
+// Built with createElement rather than JSX so the test doesn't depend on how
+// the test runner is configured to transform JSX.
+function renderDetail(
+  selectedDay: number,
+  selectedIsToday: boolean,
+  overrides: Partial<ComponentProps<typeof VenueDetail>> = {},
+) {
+  const props: ComponentProps<typeof VenueDetail> = {
+    venue,
+    status: { isLive: false, liveCount: 0, nextLabel: null, dealCount: 3 },
+    selection,
+    filteredHappyHourIds: new Set(),
+    selectedDay,
+    selectedIsToday,
+    headingId: "t",
+    ...overrides,
+  };
+  render(createElement(MemoryRouter, null, createElement(VenueDetail, props)));
 }
 
 function section(name: string) {
@@ -81,19 +86,10 @@ describe("VenueDetail deals", () => {
 
 describe("VenueDetail with no deal on the day", () => {
   it("says so under Today", () => {
-    render(
-      <MemoryRouter>
-        <VenueDetail
-          venue={{ ...venue, happy_hours: [hh("w", [3], "17:00", "19:00")] }}
-          status={{ isLive: false, liveCount: 0, nextLabel: null, dealCount: 1 }}
-          selection={selection}
-          filteredHappyHourIds={new Set()}
-          selectedDay={2}
-          selectedIsToday
-          headingId="t"
-        />
-      </MemoryRouter>,
-    );
+    renderDetail(2, true, {
+      venue: { ...venue, happy_hours: [hh("w", [3], "17:00", "19:00")] },
+      status: { isLive: false, liveCount: 0, nextLabel: null, dealCount: 1 },
+    });
     expect(within(section("Today")).getByText("No deals today")).toBeInTheDocument();
     expect(within(section("Other days")).getByText("Wed")).toBeInTheDocument();
   });
