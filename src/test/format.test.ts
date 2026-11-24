@@ -163,7 +163,7 @@ describe("describeSelection", () => {
 
 describe("formatDistance", () => {
   // A no-break space between number and unit.
-  const sp = " ";
+  const sp = "\u00a0";
 
   it("shows whole metres under 1 km", () => {
     expect(formatDistance(340, "en-AU")).toBe(`340${sp}m`);

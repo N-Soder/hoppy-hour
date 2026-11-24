@@ -76,14 +76,14 @@ export function formatTimeRange(start: string | number, end: string | number): s
  */
 export function formatDistance(m: number, locale?: string): string {
   const metres = Math.max(0, Math.round(Number.isFinite(m) ? m : 0));
-  if (metres < 1000) return `${metres} m`;
+  if (metres < 1000) return `${metres}\u00a0m`;
   const km = metres / 1000;
   // 9,950 m and up would round to "10.0 km": show it as whole kilometres.
   if (km < 9.95) {
     const oneDecimal = new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-    return `${oneDecimal.format(km)} km`;
+    return `${oneDecimal.format(km)}\u00a0km`;
   }
-  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(Math.round(km))} km`;
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(Math.round(km))}\u00a0km`;
 }
 
 /** "1 deal", "2 deals", "0 venues". */
