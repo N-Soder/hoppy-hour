@@ -1,9 +1,19 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { onRequestPost } from "../../functions/api/submissions";
 
-// Fakes: KV that lets the rate limit through, Turnstile that passes, and a D1
-// that records the bound insert values.
+// Fakes: KV that lets the rate limit through, Turnstile that passes for the
+// request's hostname (as siteverify reports it), and a D1 that records the
+// bound insert values.
 const fakeKV = { get: async () => null, put: async () => {} } as unknown as KVNamespace;
+
+const HOST = "hoppyhour.app";
+
+function stubTurnstile() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({ json: async () => ({ success: true, hostname: HOST }) }) as unknown as Response),
+  );
+}
 
 function makeEnv() {
   const bound: unknown[][] = [];
@@ -19,7 +29,7 @@ function makeEnv() {
 }
 
 function post(body: Record<string, unknown>, env: unknown) {
-  const request = new Request("https://example.test/api/submissions", {
+  const request = new Request(`https://${HOST}/api/submissions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -43,7 +53,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("POST /api/submissions location", () => {
   it("accepts a typed city with no coordinates and stores null lat/lng", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ json: async () => ({ success: true }) }) as unknown as Response));
+    stubTurnstile();
     const { env, bound } = makeEnv();
     const res = await post({ ...base, lat: null, lng: null }, env);
     expect(res.status).toBe(201);
@@ -54,7 +64,7 @@ describe("POST /api/submissions location", () => {
   });
 
   it("still stores coordinates from a picked city", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ json: async () => ({ success: true }) }) as unknown as Response));
+    stubTurnstile();
     const { env, bound } = makeEnv();
     const res = await post({ ...base, lat: -31.95, lng: 115.86 }, env);
     expect(res.status).toBe(201);
@@ -63,14 +73,14 @@ describe("POST /api/submissions location", () => {
   });
 
   it("rejects a half-present or out-of-range coordinate pair", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ json: async () => ({ success: true }) }) as unknown as Response));
+    stubTurnstile();
     const { env } = makeEnv();
     expect((await post({ ...base, lat: -31.95, lng: null }, env)).status).toBe(400);
     expect((await post({ ...base, lat: 123, lng: 115 }, env)).status).toBe(400);
   });
 
   it("still requires a city", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ json: async () => ({ success: true }) }) as unknown as Response));
+    stubTurnstile();
     const { env } = makeEnv();
     expect((await post({ ...base, city: "  " }, env)).status).toBe(400);
   });
