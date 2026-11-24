@@ -10,6 +10,8 @@ export type GeocodeResult = {
   placeType?: string;
   /** Mapbox's full name for the match, so a reviewer can see what was found. */
   placeName?: string;
+  /** Mapbox's 0–1 match quality. A misspelt or made-up street scores well below 1. */
+  relevance?: number;
 };
 
 import { COUNTRIES } from "./countries";
@@ -101,11 +103,13 @@ export async function geocodeAddress(
         const [lng, lat] = feature.center;
         const placeType: unknown = feature.place_type?.[0];
         const placeName: unknown = feature.place_name;
+        const relevance: unknown = feature.relevance;
         return {
           coords: { lat, lng },
           country: countryCodeFromContext(feature.context),
           ...(typeof placeType === "string" ? { placeType } : {}),
           ...(typeof placeName === "string" ? { placeName } : {}),
+          ...(typeof relevance === "number" ? { relevance } : {}),
         };
       }
     } catch (err) {

@@ -194,7 +194,6 @@ export default function ReviewDialog({ submission: sub, onClose, onReject, focus
     updateVenueDetails ||
     pin?.source === "manual" ||
     pin?.source === "address" ||
-    pin?.source === "area" ||
     manual.lat.trim() !== "" ||
     manual.lng.trim() !== "";
 
@@ -218,16 +217,17 @@ export default function ReviewDialog({ submission: sub, onClose, onReject, focus
     setGeocoding(true);
     setLookupMessage(null);
     try {
-      const { coords, country, placeType, placeName } = await geocodeAddress(name || sub.venue_name, query, sub.country);
+      const { coords, country, placeType, placeName, relevance } = await geocodeAddress(name || sub.venue_name, query, sub.country);
       if (coords) {
-        const source = lookupPinSource(placeType);
-        setPin({ coords, country: country ?? sub.country, source, matched: placeName });
-        if (source === "area") {
+        if (lookupPinSource(placeType, relevance) === "area") {
+          // Mapbox's fuzzy fallback (a town, or a different street): never
+          // shown as a pin, so it can't pass for the venue or the city centre.
           setLookupMessage(
-            "Only the surrounding area was found, not the street address. Check the address, or enter the venue's coordinates by hand.",
+            `No exact match for that address${placeName ? ` (the nearest guess was “${placeName}”)` : ""}, so no pin was set. Check the address, or enter the venue's coordinates by hand.`,
           );
           setShowManual(true);
         } else {
+          setPin({ coords, country: country ?? sub.country, source: "address", matched: placeName });
           setShowManual(false);
         }
       } else {
@@ -533,31 +533,29 @@ export default function ReviewDialog({ submission: sub, onClose, onReject, focus
                   Enter coordinates by hand
                 </button>
               )}
-              {pin.matched && (pin.source === "address" || pin.source === "area") && (
+              {pin.matched && pin.source === "address" && (
                 <p className="basis-full text-xs text-muted-foreground">Matched: {pin.matched}</p>
               )}
               {!pinInfo.exact && (
                 <p className="basis-full text-xs text-muted-foreground">
                   {pin.source === "upload"
                     ? "This is where the photo was uploaded from, or the picked city's centre. If the photo was taken at the venue, open the coordinates and use them."
-                    : pin.source === "area"
-                      ? "The pin marks the area the lookup matched, not the venue."
-                      : "The pin is only the centre of the city, not the venue."}{" "}
+                    : "The pin is only the centre of the city, not the venue."}{" "}
                   {address.trim()
                     ? "Look up the street address, or enter the venue's coordinates, before approving."
                     : "Add a street address and look it up, or enter the venue's coordinates, before approving."}
                 </p>
               )}
             </div>
-          ) : unrecognisedCity && !lookupMessage ? (
+          ) : unrecognisedCity ? (
             <div className="text-sm text-amber-700 dark:text-amber-400">
               <p className="flex items-start gap-1.5 font-medium">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
                 City not recognised — set the location
               </p>
               <p className="mt-0.5 pl-[1.375rem] text-xs text-muted-foreground">
-                “{sub.city ?? "The typed city"}” wasn't found by the city search, so this submission has no pin. Add
-                the street address and look it up, or enter the venue's coordinates by hand.
+                {lookupMessage ??
+                  `“${sub.city ?? "The typed city"}” wasn't found by the city search, so this submission has no pin. Add the street address and look it up, or enter the venue's coordinates by hand.`}
               </p>
             </div>
           ) : (

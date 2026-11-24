@@ -15,6 +15,7 @@ import {
   describePin,
   endsNextDay,
   filterVenues,
+  keepRowOrder,
   initialPin,
   locationLabel,
   readableError,
@@ -124,6 +125,9 @@ describe("review pin", () => {
     expect(lookupPinSource("address")).toBe("address");
     expect(lookupPinSource("poi")).toBe("address");
     expect(lookupPinSource(undefined)).toBe("address");
+    expect(lookupPinSource("address", 1)).toBe("address");
+    // Real lookup: "12 Example St, Perth" -> "Australia Ii Drive, Crawley".
+    expect(lookupPinSource("address", 0.63)).toBe("area");
     for (const t of ["place", "locality", "postcode", "region", "district", "country", "neighborhood"]) {
       expect(lookupPinSource(t)).toBe("area");
     }
@@ -159,7 +163,7 @@ describe("approveBlockers", () => {
 
   it("blocks a city-centre, area-only or photo pin with a sentence naming why", () => {
     expect(approveBlockers({ ...ready, pin: "city" })).toEqual([`The pin is only the city centre. ${LOCATION_REQUIRED}`]);
-    expect(approveBlockers({ ...ready, pin: "area" })[0]).toMatch(/^The address wasn't found, only the area/);
+    expect(approveBlockers({ ...ready, pin: "area" })[0]).toMatch(/^The lookup found no exact match/);
     expect(approveBlockers({ ...ready, pin: "upload" })[0]).toMatch(/photo was uploaded from/);
     expect(approveBlockers({ ...ready, pin: "manual" })).toEqual([]);
     expect(LOCATION_REQUIRED).toMatch(/street address must be looked up, or coordinates entered/);
@@ -239,5 +243,24 @@ describe("splitting a deal", () => {
     expect(splitDaysError([1, 2, 3, 4, 5], [0])).toBe("Pick at least one of the original deal's days (Mon–Fri).");
     expect(splitDaysError([1, 2], [1, 2])).toMatch(/^Leave at least one day/);
     expect(daysLeftAfterSplit([1, 2, 3, 4, 5], [4, 5])).toEqual([1, 2, 3]);
+  });
+});
+
+describe("venues table row order", () => {
+  const a = { id: "a", status: "active" };
+  const b = { id: "b", status: "active" };
+  const c = { id: "c", status: "inactive" };
+
+  it("keeps rows in place when the same venues come back re-sorted (status switched off)", () => {
+    const bOff = { ...b, status: "inactive" };
+    const kept = keepRowOrder(["a", "b", "c"], [a, c, bOff]);
+    expect(kept.map((v) => v.id)).toEqual(["a", "b", "c"]);
+    expect(kept[1]).toBe(bOff); // fresh data, old place
+  });
+
+  it("re-sorts after an explicit sort or search (no previous order) and when venues come or go", () => {
+    expect(keepRowOrder(null, [a, c, b]).map((v) => v.id)).toEqual(["a", "c", "b"]);
+    expect(keepRowOrder(["a", "b"], [a, c, b]).map((v) => v.id)).toEqual(["a", "c", "b"]);
+    expect(keepRowOrder(["a", "b", "c"], [a, b]).map((v) => v.id)).toEqual(["a", "b"]);
   });
 });

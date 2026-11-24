@@ -217,8 +217,9 @@ export function splitCoordPair(text: string): CoordInputs | null {
  * Where a review's pin came from:
  * - address: geocoded from a street address, and the match is a street
  *            address or a named place (Mapbox "address"/"poi")
- * - area:    a street lookup that only matched a town, suburb, postcode or
- *            region: Mapbox's fuzzy fallback, not the venue
+ * - area:    a street lookup with no exact match: Mapbox's fuzzy fallback
+ *            matched only a town, suburb, postcode or region, or a different
+ *            street (low relevance), not the venue
  * - city:    only a city-centre fallback (the submitter's city pick)
  * - upload:  sent with a Snap-a-Deal photo (device GPS or the picked city)
  * - manual:  typed in by the reviewer
@@ -249,7 +250,7 @@ export function describePin(source: PinSource): { label: string; exact: boolean 
     case "manual":
       return { label: "Entered by hand", exact: true };
     case "area":
-      return { label: "Approximate (the address wasn't found, only the area)", exact: false };
+      return { label: "Approximate (no exact match for the address)", exact: false };
     case "upload":
       return { label: "From the photo upload (device location or city)", exact: false };
     case "city":
@@ -259,14 +260,23 @@ export function describePin(source: PinSource): { label: string; exact: boolean 
 
 /** Mapbox place types that pin an actual venue rather than an area. */
 const PRECISE_PLACE_TYPES = new Set(["address", "poi"]);
+/**
+ * Below this Mapbox relevance an "address" match is a guess: "12 Example St,
+ * Perth" comes back as "Australia Ii Drive, Crawley" at 0.63, while real
+ * addresses score 1.
+ */
+export const MIN_ADDRESS_RELEVANCE = 0.9;
 
 /**
- * Pin source for a street-address lookup result. A result with no type is
- * trusted (older proxies didn't pass it on); a town, postcode or region match
- * is only the area.
+ * Pin source for a street-address lookup result. Only an address or named
+ * place that Mapbox matched with high relevance counts as the address; a
+ * town, postcode or region, or a low-relevance guess, is only the area. A
+ * result with no type or relevance is trusted (the proxy passes both on).
  */
-export function lookupPinSource(placeType: string | undefined): PinSource {
-  return !placeType || PRECISE_PLACE_TYPES.has(placeType) ? "address" : "area";
+export function lookupPinSource(placeType: string | undefined, relevance?: number): PinSource {
+  if (placeType && !PRECISE_PLACE_TYPES.has(placeType)) return "area";
+  if (relevance != null && relevance < MIN_ADDRESS_RELEVANCE) return "area";
+  return "address";
 }
 
 /** Pin to start a review with, from what the submission carried. */
@@ -340,7 +350,7 @@ export function approveBlockers(i: ApproveCheckInput): string[] {
   } else if (!confirmed) {
     const why: Record<PinSource, string> = {
       city: "The pin is only the city centre.",
-      area: "The address wasn't found, only the area around it.",
+      area: "The lookup found no exact match for the address.",
       upload: "The pin is where the photo was uploaded from, or the city centre.",
       address: "",
       manual: "",
@@ -392,6 +402,30 @@ export function sortVenues(venues: Venue[], { key, dir }: VenueSort): Venue[] {
     return byName(a, b) * sign;
   };
   return [...venues].sort(cmp);
+}
+
+/** The phone-width sort select: every column sort, both directions, in words. */
+export const VENUE_SORT_OPTIONS: readonly (VenueSort & { label: string })[] = [
+  { key: "name", dir: "asc", label: "Name, A to Z" },
+  { key: "name", dir: "desc", label: "Name, Z to A" },
+  { key: "status", dir: "asc", label: "Active first" },
+  { key: "status", dir: "desc", label: "Inactive first" },
+  { key: "deals", dir: "desc", label: "Most deals first" },
+  { key: "deals", dir: "asc", label: "Fewest deals first" },
+];
+
+/**
+ * Keep the table's rows where they were. With the previous order's ids and
+ * the freshly sorted list: when both hold the same venues, return the fresh
+ * venue objects in the previous order (a status switch under a Status sort
+ * leaves its row in place); otherwise the fresh sort wins. Callers pass null
+ * after an explicit sort or search so it re-sorts.
+ */
+export function keepRowOrder<T extends { id: string }>(previousIds: string[] | null, sorted: T[]): T[] {
+  if (!previousIds || previousIds.length !== sorted.length) return sorted;
+  const byId = new Map(sorted.map((v) => [v.id, v]));
+  if (!previousIds.every((id) => byId.has(id))) return sorted;
+  return previousIds.map((id) => byId.get(id)!);
 }
 
 /** "62 venues", or "3 of 62 venues" while a search narrows the table. */
