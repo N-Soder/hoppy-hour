@@ -67,3 +67,10 @@ describe("describeNextDeal", () => {
     expect(describeNextDeal({ ...fri, deal: hh("a", [5], "17:00:00", "23:59:00") }, false)).toBe("Fri 5 pm–late");
   });
 });
+
+describe("describeNextDeal with a 23:59 end", () => {
+  it("reads it as late, like the cards, sheet and panel", () => {
+    const next = findNextDeal([hh("late", [5], "17:00:00", "23:59:00")], 2, "12:00")!;
+    expect(describeNextDeal(next, true)).toBe("Fri 5 pm–late");
+  });
+});
