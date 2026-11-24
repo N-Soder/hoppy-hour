@@ -1,5 +1,22 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { countryCodeFromContext, geocodeAddress, normalizeAddress } from "@/lib/geocode";
+import { countryCodeFromContext, geocodeAddress, normalizeAddress, placeSearchUrl } from "@/lib/geocode";
+
+describe("placeSearchUrl", () => {
+  it("searches worldwide, near the given centre", () => {
+    const url = new URL(placeSearchUrl("  Sofia, Bulgaria ", { lng: 115.86, lat: -31.95 }), "https://x.test");
+    expect(url.pathname).toBe("/api/geocode");
+    expect(url.searchParams.get("q")).toBe("Sofia, Bulgaria");
+    expect(url.searchParams.get("scope")).toBe("world");
+    expect(url.searchParams.get("proximity")).toBe("115.86000,-31.95000");
+    expect(url.searchParams.has("country")).toBe(false);
+  });
+
+  it("leaves out proximity when there is no centre yet", () => {
+    const url = new URL(placeSearchUrl("Sofia", null), "https://x.test");
+    expect(url.searchParams.get("scope")).toBe("world");
+    expect(url.searchParams.has("proximity")).toBe(false);
+  });
+});
 
 // Builds a fetch stub that returns the given JSON payloads in order,
 // repeating the last one if more calls come in.

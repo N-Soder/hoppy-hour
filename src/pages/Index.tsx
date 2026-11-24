@@ -605,6 +605,7 @@ export default function Index() {
               searchQuery={searchQuery}
               onSearchQueryChange={onSearchQueryChange}
               onLocationSearch={handleLocationSearch}
+              searchCentre={queryLng !== null && queryLat !== null ? { lng: queryLng, lat: queryLat } : null}
               mapboxToken={token}
             />
           </div>

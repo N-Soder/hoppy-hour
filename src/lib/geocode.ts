@@ -16,6 +16,21 @@ export type GeocodeResult = {
 
 import { COUNTRIES } from "./countries";
 
+/**
+ * The /api/geocode request for the home page's place search: worldwide (a
+ * venue can be anywhere, so the deployment's GEOCODE_COUNTRY default must not
+ * apply), biased towards the current search centre so nearby places rank
+ * first.
+ */
+export function placeSearchUrl(query: string, near?: Coords | { lng: number; lat: number } | null): string {
+  const parts = [`q=${encodeURIComponent(query.trim())}`, "scope=world"];
+  if (near && Number.isFinite(near.lng) && Number.isFinite(near.lat)) {
+    // Mapbox wants lng,lat; five decimals is about a metre.
+    parts.push(`proximity=${near.lng.toFixed(5)},${near.lat.toFixed(5)}`);
+  }
+  return `/api/geocode?${parts.join("&")}`;
+}
+
 /** Legacy name map; kept for callers. countryCodeFromContext covers every country. */
 export const MAPBOX_COUNTRY_TO_CODE: Record<string, string> = {
   "Australia": "AU",

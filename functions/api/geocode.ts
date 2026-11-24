@@ -1,6 +1,7 @@
 // GET /api/geocode?q=<query> — server-side Mapbox geocoding proxy.
 // Keeps the token hidden, and supports an optional country restriction
-// (client-supplied ?country=, falling back to GEOCODE_COUNTRY), Mapbox-error
+// (client-supplied ?country=, falling back to GEOCODE_COUNTRY; ?scope=world
+// turns both off for the home page's worldwide place search), Mapbox-error
 // passthrough (the client relies on the { error, mapbox } shape), and a
 // global retry when the country-restricted search is empty. Rate limited per
 // IP. Same-origin: no CORS.
@@ -49,9 +50,16 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   // selected; it takes priority over the deployment-wide GEOCODE_COUNTRY
   // default (which only applies when the client hasn't picked one yet, e.g.
   // before any prefill/selection has happened).
+  // scope=world (the home page's place search) asks for no country filter at
+  // all: a venue can be anywhere, and that search sends ?proximity= instead so
+  // places near the current search centre still rank first.
+  const worldwide = params.get("scope") === "world";
   const countryQuery = params.get("country");
-  const country =
-    countryQuery && /^[a-zA-Z]{2}(,[a-zA-Z]{2})*$/.test(countryQuery) ? countryQuery : env.GEOCODE_COUNTRY;
+  const country = worldwide
+    ? undefined
+    : countryQuery && /^[a-zA-Z]{2}(,[a-zA-Z]{2})*$/.test(countryQuery)
+      ? countryQuery
+      : env.GEOCODE_COUNTRY;
   const countryParam = country ? `&country=${encodeURIComponent(country)}` : "";
   const base = "https://api.mapbox.com/geocoding/v5/mapbox.places";
   const extraParams = extra.join("");
