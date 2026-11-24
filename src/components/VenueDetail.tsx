@@ -1,0 +1,286 @@
+import { forwardRef, useEffect, useState, type RefObject } from "react";
+import { Link } from "react-router-dom";
+import { ChevronDown, Clock, MapPin, Navigation, PencilLine } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import LiveBadge from "@/components/LiveBadge";
+import type { VenueWithHappyHours } from "@/hooks/use-venues";
+import { DAYS_LONG } from "@/lib/constants";
+import { formatDistance, formatTimeRange, plural, type SelectionLabel } from "@/lib/format";
+import { dealsOnDay, formatDayRange, groupByDaySet, groupHappyHours, type GroupedHappyHour } from "@/lib/happy-hour-utils";
+import { directionsUrlForBrowser } from "@/lib/directions";
+import { suggestEditUrl } from "@/lib/venue-prefill";
+import { cn } from "@/lib/utils";
+import type { VenueStatus } from "@/lib/venue-status";
+
+export type { VenueStatus } from "@/lib/venue-status";
+
+/**
+ * "Perth time": a quiet note that the times beside it are in the venue's zone,
+ * shown only when that zone's clock differs from the viewer's.
+ */
+export function ZoneNote({ note, className }: { note: string | null | undefined; className?: string }) {
+  if (!note) return null;
+  return (
+    <span className={cn("flex-shrink-0 whitespace-nowrap text-[11px] text-muted-foreground", className)}>
+      <span aria-hidden="true">· </span>
+      {note}
+    </span>
+  );
+}
+
+/** One line: LIVE badge (or the next deal) plus the deal count. */
+export function VenueStatusLine({
+  status,
+  selection,
+  zoneNote,
+  className,
+}: {
+  status: VenueStatus;
+  selection: SelectionLabel;
+  /** "Perth time" when the venue's clock differs from the viewer's. */
+  zoneNote?: string | null;
+  className?: string;
+}) {
+  return (
+    <p className={cn("flex min-w-0 items-center gap-2 text-xs", className)}>
+      {status.isLive ? (
+        <>
+          <LiveBadge selection={selection} />
+          <span className="text-muted-foreground">{plural(status.liveCount, "deal")} on</span>
+        </>
+      ) : status.nextLabel ? (
+        <span className="min-w-0 truncate font-medium">
+          <span className="text-muted-foreground">Next:</span> {status.nextLabel}
+        </span>
+      ) : (
+        <span className="text-muted-foreground">
+          {status.dealCount > 0 ? "No deal matches your filters" : "No deals listed"}
+        </span>
+      )}
+      <ZoneNote note={zoneNote} />
+      {!status.isLive && status.dealCount > 0 && (
+        <span className="ml-auto flex-shrink-0 whitespace-nowrap text-muted-foreground">
+          {plural(status.dealCount, "deal")}
+        </span>
+      )}
+    </p>
+  );
+}
+
+/** Primary Directions and secondary Suggest an edit. */
+export function VenueActions({ venue, className }: { venue: VenueWithHappyHours; className?: string }) {
+  return (
+    <div className={cn("flex gap-2", className)}>
+      <Button asChild className="flex-1 gap-2">
+        <a href={directionsUrlForBrowser(venue)} target="_blank" rel="noopener noreferrer">
+          <Navigation className="h-4 w-4" aria-hidden="true" />
+          Directions
+          <span className="sr-only"> (opens in a new tab)</span>
+        </a>
+      </Button>
+      <Button asChild variant="outline" className="flex-1 gap-2">
+        <Link to={suggestEditUrl(venue)}>
+          <PencilLine className="h-4 w-4" aria-hidden="true" />
+          Suggest an edit
+        </Link>
+      </Button>
+    </div>
+  );
+}
+
+interface VenueDetailProps {
+  venue: VenueWithHappyHours;
+  status: VenueStatus;
+  selection: SelectionLabel;
+  /** Deals on at the selection (to mark them). */
+  filteredHappyHourIds: Set<string>;
+  /** Weekday of the selected date (0=Sun…6=Sat): its deals are listed first. */
+  selectedDay: number;
+  selectedIsToday: boolean;
+  /** "Perth time" when the venue's clock differs from the viewer's (deal times are venue time). */
+  zoneNote?: string | null;
+  /** Set when the venue lies outside the search radius (opened from a link). */
+  outsideRadiusNote?: string | null;
+  /** Id for the heading, so the containing dialog/panel can be labelled by it. */
+  headingId: string;
+  /** Leave out the name/status header (the sheet draws its own). */
+  hideHeader?: boolean;
+}
+
+/**
+ * The full venue detail: name, address, distance, actions, then the selected
+ * day's deals ("Today" when it is today) by start time, each with the days it
+ * runs, then the venue's other deals grouped by day set in Monday-first order.
+ * Shared by the desktop side panel and the phone bottom sheet.
+ */
+const VenueDetail = forwardRef<HTMLHeadingElement, VenueDetailProps>(function VenueDetail(
+  { venue, status, selection, filteredHappyHourIds, selectedDay, selectedIsToday, zoneNote, outsideRadiusNote, headingId, hideHeader },
+  headingRef,
+) {
+  const grouped = groupHappyHours(venue.happy_hours);
+  const today = dealsOnDay(grouped, selectedDay);
+  // Today's deals carry their day set, so the rest of the week lists only the
+  // others: the full schedule without printing a deal twice.
+  const todayIds = new Set(today.map((d) => d.ids[0]));
+  const sections = groupByDaySet(grouped.filter((d) => !todayIds.has(d.ids[0])));
+  const dayName = selectedIsToday ? "Today" : DAYS_LONG[selectedDay];
+
+  return (
+    <div className="space-y-4">
+      {!hideHeader && (
+        <div>
+          <h2 id={headingId} ref={headingRef} tabIndex={-1} className="text-lg font-semibold leading-tight focus:outline-none">
+            {venue.name}
+          </h2>
+          <VenueStatusLine status={status} selection={selection} zoneNote={zoneNote} className="mt-1" />
+        </div>
+      )}
+
+      <div className="space-y-1.5 text-sm">
+        <p className="flex items-start gap-2 text-muted-foreground">
+          <MapPin className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
+          <span>{venue.address}</span>
+        </p>
+        <p className="flex items-center gap-2">
+          <Navigation className="h-4 w-4 flex-shrink-0 text-primary" aria-hidden="true" />
+          <span className="font-medium text-primary">{formatDistance(venue.distance_meters)} away</span>
+        </p>
+        {outsideRadiusNote && <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">{outsideRadiusNote}</p>}
+      </div>
+
+      <VenueActions venue={venue} />
+
+      {grouped.length === 0 ? (
+        <section className="border-t border-border pt-4" aria-labelledby={`${headingId}-deals`}>
+          <h3 id={`${headingId}-deals`} className="mb-1 text-sm font-semibold">
+            Deals
+          </h3>
+          <p className="text-sm text-muted-foreground">No deals listed</p>
+        </section>
+      ) : (
+        <>
+          <section className="border-t border-border pt-4" aria-labelledby={`${headingId}-today`}>
+            <h3 id={`${headingId}-today`} className="mb-3 flex items-baseline gap-1.5 text-sm font-semibold">
+              {dayName}
+              {zoneNote && <span className="text-xs font-normal text-muted-foreground">· times are {zoneNote}</span>}
+            </h3>
+            {today.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No deals {selectedIsToday ? "today" : `on ${DAYS_LONG[selectedDay]}`}
+              </p>
+            ) : (
+              <ul className="space-y-3 border-l-2 border-primary pl-3">
+                {today.map((deal) => (
+                  <DealItem
+                    key={deal.ids[0]}
+                    deal={deal}
+                    on={deal.ids.some((id) => filteredHappyHourIds.has(id))}
+                    selection={selection}
+                    days={deal.days_of_week}
+                  />
+                ))}
+              </ul>
+            )}
+          </section>
+
+          {sections.length > 0 && (
+            <section className="border-t border-border pt-4" aria-labelledby={`${headingId}-week`}>
+              <h3 id={`${headingId}-week`} className="mb-3 text-sm font-semibold">
+                Other days
+              </h3>
+              <div className="space-y-4">
+                {sections.map(({ days, deals }) => (
+                  <div key={days.join(",")} className="border-l-2 border-border pl-3">
+                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      {formatDayRange(days)}
+                    </h4>
+                    <ul className="space-y-3">
+                      {deals.map((deal) => (
+                        <DealItem key={deal.ids[0]} deal={deal} on={false} selection={selection} />
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </>
+      )}
+    </div>
+  );
+});
+
+export default VenueDetail;
+
+function DealItem({
+  deal,
+  on,
+  selection,
+  days,
+}: {
+  deal: GroupedHappyHour;
+  on: boolean;
+  selection: SelectionLabel;
+  /** Show which days the deal runs on (for the Today list). */
+  days?: number[];
+}) {
+  return (
+    <li>
+      <div className="flex items-center gap-1.5 text-sm font-medium">
+        <Clock className={cn("h-3.5 w-3.5 flex-shrink-0", on ? "text-primary" : "text-muted-foreground")} aria-hidden="true" />
+        <span className={cn("tabular-nums", on && "text-primary")}>{formatTimeRange(deal.start_time, deal.end_time)}</span>
+        {on && <LiveBadge selection={selection} className="ml-1" />}
+        {days && (
+          <span className="ml-auto flex-shrink-0 pl-2 text-xs font-normal text-muted-foreground">
+            {days.length === 1 ? `${DAYS_LONG[days[0]]}s only` : formatDayRange(days)}
+          </span>
+        )}
+      </div>
+      <p className="mt-0.5 text-sm leading-snug">{deal.description}</p>
+      {deal.tags && deal.tags.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {deal.tags.map((tag) => (
+            <Badge key={tag} variant="secondary" className="text-xs capitalize">
+              {tag}
+            </Badge>
+          ))}
+        </div>
+      )}
+    </li>
+  );
+}
+
+/**
+ * A "more below" cue pinned to the bottom of a scroll container: a fade and a
+ * chevron while there is content past the fold. Place it as the container's
+ * last child.
+ */
+export function ScrollCue({ scrollRef }: { scrollRef: RefObject<HTMLElement> }) {
+  const [more, setMore] = useState(false);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const check = () => setMore(el.scrollHeight - el.scrollTop - el.clientHeight > 8);
+    check();
+    el.addEventListener("scroll", check, { passive: true });
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    Array.from(el.children).forEach((c) => ro.observe(c));
+    return () => {
+      el.removeEventListener("scroll", check);
+      ro.disconnect();
+    };
+  }, [scrollRef]);
+  return (
+    <div
+      aria-hidden="true"
+      className={cn(
+        "pointer-events-none sticky bottom-0 -mt-12 flex h-12 items-end justify-center bg-gradient-to-t from-background to-transparent pb-1 transition-opacity",
+        more ? "opacity-100" : "opacity-0",
+      )}
+    >
+      <ChevronDown className="h-5 w-5 text-muted-foreground" />
+    </div>
+  );
+}

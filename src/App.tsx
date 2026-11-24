@@ -10,17 +10,17 @@ import Submit from "./pages/Submit";
 import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { applyThemeColor, type ThemeChoice } from "./lib/theme-color";
 
 const queryClient = new QueryClient();
 
-/** Keep the browser-chrome color (mobile address bar / PWA titlebar) in sync
-    with the active theme. Values match --card in index.css. */
+/** Keep the browser-chrome color (mobile status bar / PWA titlebar) in sync
+    with the theme chosen in the app. See lib/theme-color. */
 function ThemeColorSync() {
-  const { resolvedTheme } = useTheme();
+  const { theme } = useTheme();
   useEffect(() => {
-    const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-    meta?.setAttribute("content", resolvedTheme === "dark" ? "#221b16" : "#ffffff");
-  }, [resolvedTheme]);
+    applyThemeColor(theme as ThemeChoice);
+  }, [theme]);
   return null;
 }
 

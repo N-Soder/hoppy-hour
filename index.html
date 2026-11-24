@@ -2,14 +2,22 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover: the page draws edge to edge and pads itself with
+         env(safe-area-inset-*) (notch in landscape, home indicator). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <link rel="icon" href="/favicon.ico" type="image/x-icon" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <meta name="theme-color" content="#ffffff" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <!-- Browser/status-bar colour = the app header (--card) in each theme.
+         The theme script below and src/lib/theme-color.ts override both when
+         the in-app theme differs from the system's. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#221b16" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <!-- "default": an opaque status bar that the page starts below, so the
+         header is never under the notch or the clock in standalone mode. -->
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="HoppyHour" />
-    <title>HoppyHour – Find Local Hoppy Hour Deals</title>
+    <title>HoppyHour – Find happy hour deals near you</title>
 
     <!-- Apply the saved (or system) theme before first paint to avoid a
          light-mode flash for dark-mode users. Key matches next-themes' default. -->
@@ -22,6 +30,11 @@
             ((!t || t === "system") &&
               window.matchMedia("(prefers-color-scheme: dark)").matches);
           if (dark) document.documentElement.classList.add("dark");
+          if (t === "light" || t === "dark") {
+            var c = t === "dark" ? "#221b16" : "#ffffff";
+            var metas = document.querySelectorAll('meta[name="theme-color"]');
+            for (var i = 0; i < metas.length; i++) metas[i].setAttribute("content", c);
+          }
         } catch (e) {}
       })();
     </script>
@@ -30,21 +43,21 @@
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" defer></script>
 
     <!-- SEO -->
-    <meta name="description" content="Discover the best hoppy hour deals near you. Find bars and restaurants with live happy hour specials on an interactive map." />
+    <meta name="description" content="Find happy hour deals at bars and restaurants near you, on a map that shows what is on right now. Anyone can submit a deal." />
     <meta name="author" content="HoppyHour" />
 
     <!-- Open Graph -->
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="HoppyHour – Find Local Hoppy Hour Deals" />
-    <meta property="og:description" content="Discover the best hoppy hour deals near you. Find bars and restaurants with live happy hour specials on an interactive map." />
+    <meta property="og:title" content="HoppyHour – Find happy hour deals near you" />
+    <meta property="og:description" content="Find happy hour deals at bars and restaurants near you, on a map that shows what is on right now. Anyone can submit a deal." />
     <meta property="og:image" content="https://hoppyhour.soderholm.app/og-image.png" />
     <meta property="og:url" content="https://hoppyhour.soderholm.app/" />
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:site" content="@HoppyHour" />
-    <meta name="twitter:title" content="HoppyHour – Find Local Hoppy Hour Deals" />
-    <meta name="twitter:description" content="Discover the best hoppy hour deals near you. Find bars and restaurants with live happy hour specials on an interactive map." />
+    <meta name="twitter:title" content="HoppyHour – Find happy hour deals near you" />
+    <meta name="twitter:description" content="Find happy hour deals at bars and restaurants near you, on a map that shows what is on right now. Anyone can submit a deal." />
     <meta name="twitter:image" content="https://hoppyhour.soderholm.app/og-image.png" />
   </head>
 

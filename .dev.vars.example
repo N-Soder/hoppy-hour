@@ -1,11 +1,17 @@
 # Local secrets for `wrangler pages dev` (copy to .dev.vars — gitignored).
 # In production set these as encrypted secrets instead:
 #   npx wrangler pages secret put MAPBOX_ACCESS_TOKEN
+#   npx wrangler pages secret put MAPBOX_GEOCODE_TOKEN   (optional, recommended)
 #   npx wrangler pages secret put TURNSTILE_SECRET_KEY
 #   npx wrangler pages secret put ANTHROPIC_API_KEY
 
 # Mapbox public token (pk.…). Restrict it to your site's URLs in the Mapbox dashboard.
 MAPBOX_ACCESS_TOKEN=
+
+# Optional: a separate token used only by the server for /api/geocode. Keep it
+# secret and unrestricted by URL (server requests send no browser Referer). When
+# unset, geocoding falls back to MAPBOX_ACCESS_TOKEN with a Referer workaround.
+MAPBOX_GEOCODE_TOKEN=
 
 # Cloudflare's always-passes TEST secret — pairs with the test site key in .env.example.
 TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
