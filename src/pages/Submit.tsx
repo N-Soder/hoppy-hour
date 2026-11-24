@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { api, ApiError } from "@/lib/api";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   Clock,
   Send,
@@ -51,6 +51,7 @@ import { CitySearch } from "@/components/submit/CitySearch";
 import { useLocationPrefill } from "@/hooks/use-location-prefill";
 import { computeLocationPrefill } from "@/lib/location-prefill";
 import type { CityResult } from "@/lib/city-search";
+import { parseVenuePrefill, prefillCity, type VenuePrefill } from "@/lib/venue-prefill";
 import {
   DRAFT_SAVE_DEBOUNCE_MS,
   DRAFT_VERSION,
@@ -202,14 +203,26 @@ export default function Submit() {
   // to the toast), so the reason is visible without relying on the transient toast.
   const [serverError, setServerError] = useState<string | null>(null);
   const { toast } = useToast();
+  const navigate = useNavigate();
+
+  // "Suggest an edit" from a venue opens this page with the venue's details
+  // in the URL (see lib/venue-prefill). Read once, on first render: it fills
+  // the form, counts as the user's location choice, and is then dropped from
+  // the address so a reload doesn't apply it on top of what they've typed.
+  const [venuePrefill] = useState<VenuePrefill | null>(() =>
+    parseVenuePrefill(new URLSearchParams(window.location.search)),
+  );
+  useEffect(() => {
+    if (venuePrefill) navigate({ search: "" }, { replace: true });
+  }, [venuePrefill, navigate]);
 
   const form = useForm<SubmissionForm>({
     resolver: zodResolver(submissionSchema),
     defaultValues: {
-      venue_name: "",
-      country: "",
-      city: "",
-      venue_address: "",
+      venue_name: venuePrefill?.venue_name ?? "",
+      country: venuePrefill?.country ?? "",
+      city: venuePrefill?.city ?? "",
+      venue_address: venuePrefill?.venue_address ?? "",
       days_of_week: [],
       start_time: "",
       end_time: "",
@@ -222,14 +235,16 @@ export default function Submit() {
   // Location picker. `selectedCity` holds the chosen city's coordinates (the
   // map pin source); the form's `city`/`country` fields mirror it for
   // validation + display. Prefill fills these passively (see below).
-  const [selectedCity, setSelectedCity] = useState<CityResult | null>(null);
+  const [selectedCity, setSelectedCity] = useState<CityResult | null>(() =>
+    venuePrefill ? prefillCity(venuePrefill) : null,
+  );
   // Once the user picks a country or city themselves, the passive GPS/IP prefill
   // must stop. On mobile, geolocation is often already granted and its GPS fix
   // resolves a second or two AFTER load — late enough to land after the user has
   // already chosen (e.g.) Canada and clobber both city and country back to their
   // physical location (AU). `dirtyFields` alone doesn't guard this (the pickers
   // set values without marking them dirty), so track explicit interaction here.
-  const [locationTouched, setLocationTouched] = useState(false);
+  const [locationTouched, setLocationTouched] = useState(() => venuePrefill !== null);
   const prefill = useLocationPrefill();
 
   const handleCityChange = (city: CityResult) => {
@@ -523,7 +538,7 @@ export default function Submit() {
           aria-label={`Edit deal ${i + 1}`}
         >
           <Pencil className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">Edit</span>
+          <span className="hidden md:inline">Edit</span>
         </Button>
         <Button
           type="button"
@@ -813,7 +828,9 @@ export default function Submit() {
               Submit a deal
             </h1>
             <CardDescription>
-              Know a great deal? Share it with the community. Submissions are reviewed before appearing on the map.
+              {venuePrefill
+                ? `Suggesting an edit to ${venuePrefill.venue_name}. Add the deals as they are now; a moderator compares them with what's listed before anything changes.`
+                : "Know a great deal? Share it with the community. Submissions are reviewed before appearing on the map."}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -821,18 +838,39 @@ export default function Submit() {
             {draftOffer && (
               <Alert className="mb-6">
                 <History className="h-4 w-4" />
-                <AlertTitle>Pick up where you left off?</AlertTitle>
+                <AlertTitle>
+                  {venuePrefill ? "You have an unfinished submission" : "Pick up where you left off?"}
+                </AlertTitle>
                 <AlertDescription>
                   <p>
                     {describeDraft(draftOffer)} · saved {formatSavedAt(draftOffer.savedAt)}
                   </p>
+                  {venuePrefill && (
+                    <p className="mt-1">
+                      Restoring it replaces the {venuePrefill.venue_name} details below. Your draft is kept
+                      until you choose.
+                    </p>
+                  )}
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <Button type="button" size="sm" onClick={() => restoreDraft(draftOffer)}>
-                      Restore draft
-                    </Button>
-                    <Button type="button" size="sm" variant="outline" onClick={discardDraft}>
-                      Start fresh
-                    </Button>
+                    {venuePrefill ? (
+                      <>
+                        <Button type="button" size="sm" onClick={discardDraft}>
+                          Discard draft
+                        </Button>
+                        <Button type="button" size="sm" variant="outline" onClick={() => restoreDraft(draftOffer)}>
+                          Restore draft instead
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button type="button" size="sm" onClick={() => restoreDraft(draftOffer)}>
+                          Restore draft
+                        </Button>
+                        <Button type="button" size="sm" variant="outline" onClick={discardDraft}>
+                          Start fresh
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </AlertDescription>
               </Alert>
@@ -877,7 +915,7 @@ export default function Submit() {
                 />
 
                 {/* Location: country + city (picked), optional street address */}
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-4 md:grid-cols-2">
                   <FormField
                     control={form.control}
                     name="country"
@@ -1007,7 +1045,7 @@ export default function Submit() {
                           </Chip>
                         </div>
                         {/* Day chips — Monday first */}
-                        <div className="flex gap-1.5 sm:gap-2" role="group" aria-labelledby="days-label">
+                        <div className="flex gap-1.5 md:gap-2" role="group" aria-labelledby="days-label">
                           {WEEK_DAYS.map((day) => (
                             <Chip
                               key={day.value}
