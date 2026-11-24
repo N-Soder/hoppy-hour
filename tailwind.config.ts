@@ -108,6 +108,14 @@ export default {
     // to give a control a 44px height on phones only.
     plugin(({ addVariant }) => {
       addVariant("coarse", "@media (pointer: coarse)");
+      // `md` is a raw media query, so Tailwind cannot derive `max-md:` from
+      // it. Define it by hand as the exact complement (PHONE_QUERY in
+      // src/hooks/use-mobile.tsx); without this, `max-md:` classes compile to
+      // nothing.
+      addVariant(
+        "max-md",
+        "@media (max-width: 767.98px), (max-height: 500.98px) and (pointer: coarse)",
+      );
     }),
   ],
 } satisfies Config;
