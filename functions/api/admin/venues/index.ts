@@ -4,7 +4,7 @@
 import type { Env } from "../../../_shared/db";
 import { nowIso, rowToVenue } from "../../../_shared/db";
 import { error, json, readJson } from "../../../_shared/http";
-import { isStringLen } from "../../../_shared/validate";
+import { validateVenue } from "../../../_shared/validate";
 import type { Venue } from "../../../../src/lib/api-types";
 
 // deal_count counts deals the way the admin editor shows them: records that
@@ -34,15 +34,15 @@ interface VenueBody {
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const b = await readJson<VenueBody>(request);
   if (!b) return error("invalid JSON", 400);
-  if (!isStringLen(b.name, 200)) return error("name is required (max 200)", 400);
-  if (!isStringLen(b.address, 500)) return error("address is required (max 500)", 400);
+  const venueErr = validateVenue(b, { requireCoords: false });
+  if (venueErr) return error(venueErr, 400);
 
   const id = crypto.randomUUID();
   const now = nowIso();
   await env.DB.prepare(
     `INSERT INTO venues (id, name, address, country, lat, lng, status, created_at, updated_at)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7, ?7)`,
-  ).bind(id, b.name, b.address, b.country ?? null, b.lat ?? null, b.lng ?? null, now).run();
+  ).bind(id, b.name, b.address, b.country?.toUpperCase() ?? null, b.lat ?? null, b.lng ?? null, now).run();
 
   return json({ id } satisfies Pick<Venue, "id">, 201);
 };

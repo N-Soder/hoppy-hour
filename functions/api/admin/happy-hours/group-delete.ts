@@ -6,11 +6,14 @@
 // can't delete records that have since become a different deal.
 import type { Env } from "../../../_shared/db";
 import { error, json, readJson } from "../../../_shared/http";
+import { validateIdList } from "../../../_shared/validate";
 import { loadGroup } from "../../../_shared/deal-group";
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const b = await readJson<{ ids: string[] }>(request);
-  if (!b || !Array.isArray(b.ids) || b.ids.length === 0) return error("ids required", 400);
+  if (!b) return error("invalid JSON", 400);
+  const idsErr = validateIdList(b.ids);
+  if (idsErr) return error(idsErr, 400);
   const group = await loadGroup(env, b.ids);
   if (!group.ok) return error(group.message, group.status);
   await env.DB.batch(
