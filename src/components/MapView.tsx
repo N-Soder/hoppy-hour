@@ -19,6 +19,7 @@ import {
   venuesToFeatureCollection,
 } from "@/lib/map-clusters";
 import { MapMessage } from "@/components/MapMessage";
+import { MarkerLayer, createMarkerButton, type LngLatTuple, type MarkerItem } from "@/lib/map-markers";
 
 /** Mapbox error events carry the failed request's HTTP status when there is one. */
 type MapErrorEvent = { error?: { status?: number; message?: string }; sourceId?: string };
@@ -30,6 +31,7 @@ const panDuration = () => (prefersReducedMotion() ? 0 : 400);
 // tiles (which querySourceFeatures reads) while some layer uses it. The pins
 // and clusters themselves are DOM markers so each can be a focusable button.
 const HIDDEN_LAYER_ID = "venues-hidden";
+const MAX_HIDDEN_CLUSTERS = 150;
 
 interface MapViewProps {
   token: string;
@@ -83,22 +85,9 @@ function pinColours(isLive: boolean, isSelected: boolean, isDark: boolean): PinC
   return { bg, border, text };
 }
 
-function baseMarkerElement(className: string): HTMLButtonElement {
-  const el = document.createElement("button");
-  el.type = "button";
-  el.className = className;
-  Object.assign(el.style, {
-    padding: "0",
-    borderRadius: "9999px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontWeight: "700",
-    lineHeight: "1",
-    fontFamily: "inherit",
-    transition: "width 0.15s ease, height 0.15s ease, background 0.15s ease",
-  } satisfies Partial<CSSStyleDeclaration>);
-  return el;
+/** The marker's size, set on the button at once and on its face (which eases). */
+function setMarkerSize(el: HTMLElement, face: HTMLElement, size: number) {
+  el.style.width = el.style.height = face.style.width = face.style.height = `${size}px`;
 }
 
 export default function MapView({
@@ -130,8 +119,6 @@ export default function MapView({
 
   // Everything the marker renderer reads, kept in refs so the map's render
   // handler (registered once per map) always sees the latest props.
-  const pinsRef = useRef(new Map<string, { marker: mapboxgl.Marker; el: HTMLButtonElement }>());
-  const clustersRef = useRef(new Map<number, { marker: mapboxgl.Marker; el: HTMLButtonElement }>());
   const latest = useRef({ venues, liveVenueIds, liveVenueCounts, selectedVenueId, selection, onSelectVenue, isDark: resolvedTheme === "dark" });
   latest.current = { venues, liveVenueIds, liveVenueCounts, selectedVenueId, selection, onSelectVenue, isDark: resolvedTheme === "dark" };
   const venueById = useRef(new Map<string, VenueWithHappyHours>());
@@ -139,153 +126,107 @@ export default function MapView({
   const onBackgroundClickRef = useRef(onBackgroundClick);
   onBackgroundClickRef.current = onBackgroundClick;
 
+  // The pins and cluster bubbles: created once each and reused while the map
+  // moves (see lib/map-markers). Made with the map, in the init effect.
+  const pinsRef = useRef<MarkerLayer<string, mapboxgl.Marker> | null>(null);
+  const clustersRef = useRef<MarkerLayer<number, mapboxgl.Marker> | null>(null);
+  /** The map's rendered frames so far (see MarkerLayer.sync). */
+  const frameRef = useRef(0);
+
   const styleForTheme = (theme: string | undefined) =>
     theme === "dark" ? "mapbox://styles/mapbox/dark-v11" : "mapbox://styles/mapbox/light-v11";
 
-  /** Create or update the DOM pin for one venue. */
-  const upsertPin = useCallback((map: mapboxgl.Map, venue: VenueWithHappyHours) => {
+  /** Style one venue pin for its current state (only when that state changed). */
+  const stylePin = useCallback((el: HTMLButtonElement, venue: VenueWithHappyHours) => {
     const { liveVenueIds: live, liveVenueCounts: counts, selectedVenueId: sel, selection: s, isDark } = latest.current;
     const isLive = live.has(venue.id);
     const isSelected = venue.id === sel;
     const count = counts.get(venue.id) ?? 0;
     const label = pinLabel(venue.name, count, s);
     const sig = `${isLive}|${isSelected}|${count}|${isDark}|${label}`;
-    let entry = pinsRef.current.get(venue.id);
-    if (!entry) {
-      const el = baseMarkerElement("venue-pin");
-      el.dataset.venuePin = venue.id;
-      el.addEventListener("click", (e) => {
-        e.stopPropagation();
-        latest.current.onSelectVenue(venue.id);
-      });
-      const marker = new mapboxgl.Marker({ element: el }).setLngLat([venue.lng, venue.lat]);
-      entry = { marker, el };
-      pinsRef.current.set(venue.id, entry);
-    }
-    const { el, marker } = entry;
-    marker.setLngLat([venue.lng, venue.lat]);
-    if (!marker.getElement().isConnected) marker.addTo(map);
     if (el.dataset.sig === sig) return;
     el.dataset.sig = sig;
+    const face = el.firstChild as HTMLElement;
     const c = pinColours(isLive, isSelected, isDark);
-    const size = isSelected ? 36 : isLive ? 28 : 18;
-    Object.assign(el.style, {
-      width: `${size}px`,
-      height: `${size}px`,
+    setMarkerSize(el, face, isSelected ? 36 : isLive ? 28 : 18);
+    el.style.zIndex = isSelected ? "3" : isLive ? "2" : "1";
+    Object.assign(face.style, {
       background: c.bg,
       border: c.border,
       color: c.text,
       fontSize: isLive ? "12px" : "10px",
       boxShadow: isLive || isSelected ? "0 2px 8px rgba(0,0,0,0.25)" : "0 1px 4px rgba(0,0,0,0.12)",
       opacity: isLive || isSelected ? "1" : "0.75",
-      zIndex: isSelected ? "3" : isLive ? "2" : "1",
     } satisfies Partial<CSSStyleDeclaration>);
-    el.textContent = count > 0 ? String(count) : "";
+    face.textContent = count > 0 ? String(count) : "";
     el.setAttribute("aria-label", label);
     el.setAttribute("aria-pressed", String(isSelected));
   }, []);
 
-  /** Create or update the DOM bubble for one cluster. */
-  const upsertCluster = useCallback(
-    (map: mapboxgl.Map, id: number, coords: [number, number], count: number, live: number) => {
-      const { selection: s, isDark } = latest.current;
-      let entry = clustersRef.current.get(id);
-      if (!entry) {
-        const el = baseMarkerElement("venue-cluster");
-        el.addEventListener("click", (e) => {
-          e.stopPropagation();
-          const source = map.getSource(VENUE_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
-          const at = clustersRef.current.get(id)?.marker.getLngLat();
-          source?.getClusterExpansionZoom(id, (err, zoom) => {
-            if (err || zoom == null || !at) return;
-            // A programmatic move: it carries no originalEvent, so it does not
-            // offer "Search this area" (see moveend below).
-            map.easeTo({ center: at, zoom: zoom + 0.25, duration: panDuration() });
-          });
-        });
-        const pip = document.createElement("span");
-        pip.className = "venue-cluster-pip";
-        pip.setAttribute("aria-hidden", "true");
-        el.appendChild(document.createElement("span"));
-        el.appendChild(pip);
-        const marker = new mapboxgl.Marker({ element: el }).setLngLat(coords);
-        entry = { marker, el };
-        clustersRef.current.set(id, entry);
-      }
-      const { el, marker } = entry;
-      marker.setLngLat(coords);
-      if (!marker.getElement().isConnected) marker.addTo(map);
-      const label = clusterLabel(count, live, s);
-      const sig = `${count}|${live}|${isDark}|${label}`;
-      if (el.dataset.sig === sig) return;
-      el.dataset.sig = sig;
-      const size = count < 10 ? 34 : count < 50 ? 40 : 46;
-      const liveC = pinColours(true, false, isDark);
-      Object.assign(el.style, {
-        width: `${size}px`,
-        height: `${size}px`,
-        background: live > 0 ? (isDark ? "hsl(25, 21%, 14%)" : "white") : isDark ? "hsl(20, 8%, 30%)" : "hsl(0, 0%, 88%)",
-        border: live > 0 ? `3px solid ${liveC.bg}` : `2px solid ${isDark ? "hsl(20, 8%, 55%)" : "hsl(0, 0%, 55%)"}`,
-        color: isDark ? "hsl(34, 43%, 90%)" : "hsl(33, 34%, 13%)",
-        fontSize: "13px",
-        boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
-        zIndex: live > 0 ? "2" : "1",
-      } satisfies Partial<CSSStyleDeclaration>);
-      (el.firstChild as HTMLElement).textContent = clusterText(count);
-      const pip = el.lastChild as HTMLElement;
-      pip.textContent = live > 0 ? clusterText(live) : "";
-      pip.style.display = live > 0 ? "flex" : "none";
-      pip.style.background = liveC.bg;
-      pip.style.color = liveC.text;
-      el.setAttribute("aria-label", label);
-    },
-    [],
-  );
+  /** Style one cluster bubble for its current counts (only when they changed). */
+  const styleCluster = useCallback((el: HTMLButtonElement, count: number, live: number) => {
+    const { selection: s, isDark } = latest.current;
+    const label = clusterLabel(count, live, s);
+    const sig = `${count}|${live}|${isDark}|${label}`;
+    if (el.dataset.sig === sig) return;
+    el.dataset.sig = sig;
+    const face = el.firstChild as HTMLElement;
+    const liveC = pinColours(true, false, isDark);
+    setMarkerSize(el, face, count < 10 ? 34 : count < 50 ? 40 : 46);
+    el.style.zIndex = live > 0 ? "2" : "1";
+    Object.assign(face.style, {
+      background: live > 0 ? (isDark ? "hsl(25, 21%, 14%)" : "white") : isDark ? "hsl(20, 8%, 30%)" : "hsl(0, 0%, 88%)",
+      border: live > 0 ? `3px solid ${liveC.bg}` : `2px solid ${isDark ? "hsl(20, 8%, 55%)" : "hsl(0, 0%, 55%)"}`,
+      color: isDark ? "hsl(34, 43%, 90%)" : "hsl(33, 34%, 13%)",
+      fontSize: "13px",
+      boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+    } satisfies Partial<CSSStyleDeclaration>);
+    face.textContent = clusterText(count);
+    const pip = el.lastChild as HTMLElement;
+    pip.textContent = live > 0 ? clusterText(live) : "";
+    pip.style.display = live > 0 ? "flex" : "none";
+    pip.style.background = liveC.bg;
+    pip.style.color = liveC.text;
+    el.setAttribute("aria-label", label);
+  }, []);
 
-  /** Draw the markers for whatever the clustered source currently shows. */
+  /** Show the markers for whatever the clustered source currently reports. */
   const renderMarkers = useCallback(() => {
     const map = mapRef.current;
-    if (!map || !map.getSource(VENUE_SOURCE_ID) || !map.isSourceLoaded(VENUE_SOURCE_ID)) return;
-    const features = map.querySourceFeatures(VENUE_SOURCE_ID);
-    const pinIds = new Set<string>();
-    const clusterIds = new Set<number>();
-    for (const f of features) {
+    const pins = pinsRef.current;
+    const clusters = clustersRef.current;
+    if (!map || !pins || !clusters || !map.getSource(VENUE_SOURCE_ID) || !map.isSourceLoaded(VENUE_SOURCE_ID)) return;
+    const pinItems: MarkerItem<string>[] = [];
+    const clusterItems: MarkerItem<number>[] = [];
+    const clusterCounts = new Map<number, { count: number; live: number }>();
+    for (const f of map.querySourceFeatures(VENUE_SOURCE_ID)) {
       const p = f.properties as Record<string, unknown> | null;
       if (!p || f.geometry.type !== "Point") continue;
-      const coords = f.geometry.coordinates as [number, number];
       if (p.cluster) {
         const id = p.cluster_id as number;
-        if (clusterIds.has(id)) continue;
-        clusterIds.add(id);
-        upsertCluster(map, id, coords, p.point_count as number, (p.live as number) ?? 0);
+        if (clusterCounts.has(id)) continue;
+        clusterCounts.set(id, { count: p.point_count as number, live: (p.live as number) ?? 0 });
+        clusterItems.push({ key: id, lngLat: f.geometry.coordinates as LngLatTuple });
       } else {
-        const id = p.id as string;
-        const venue = venueById.current.get(id);
-        if (!venue || pinIds.has(id)) continue;
-        pinIds.add(id);
-        upsertPin(map, venue);
+        const venue = venueById.current.get(p.id as string);
+        // A venue's pin sits at its own coordinates, not the tile-rounded ones.
+        if (venue) pinItems.push({ key: venue.id, lngLat: [venue.lng, venue.lat] });
       }
     }
     // The selected venue is kept out of the clustered source: always its own pin.
     const sel = latest.current.selectedVenueId;
     const selVenue = sel ? venueById.current.get(sel) : undefined;
-    if (selVenue) {
-      pinIds.add(selVenue.id);
-      upsertPin(map, selVenue);
+    if (selVenue) pinItems.push({ key: selVenue.id, lngLat: [selVenue.lng, selVenue.lat] });
+    const frame = frameRef.current;
+    for (const { el } of pins.sync(pinItems, frame)) {
+      const venue = venueById.current.get(el.dataset.venuePin!);
+      if (venue) stylePin(el, venue);
     }
-    for (const [id, { marker }] of pinsRef.current) {
-      if (!pinIds.has(id)) {
-        marker.remove();
-        if (!venueById.current.has(id)) pinsRef.current.delete(id);
-      }
+    for (const { el, key } of clusters.sync(clusterItems, frame)) {
+      const c = clusterCounts.get(key)!;
+      styleCluster(el, c.count, c.live);
     }
-    for (const [id, { marker }] of clustersRef.current) {
-      if (!clusterIds.has(id)) {
-        marker.remove();
-        clustersRef.current.delete(id);
-      }
-    }
-  }, [upsertCluster, upsertPin]);
+  }, [stylePin, styleCluster]);
 
   const sourceData = useCallback(
     () => venuesToFeatureCollection(latest.current.venues, latest.current.liveVenueIds, latest.current.selectedVenueId),
@@ -351,7 +292,52 @@ export default function MapView({
         paint: { "circle-radius": 0, "circle-opacity": 0, "circle-stroke-opacity": 0 },
       });
     });
-    map.on("render", renderMarkers);
+    const pins = new MarkerLayer<string, mapboxgl.Marker>(
+      (id) => {
+        const { el } = createMarkerButton("venue-pin");
+        el.dataset.venuePin = id;
+        el.addEventListener("click", (e) => {
+          e.stopPropagation();
+          latest.current.onSelectVenue(id);
+        });
+        return { el, marker: new mapboxgl.Marker({ element: el }) };
+      },
+      (marker) => marker.addTo(map),
+    );
+    const clusters = new MarkerLayer<number, mapboxgl.Marker>(
+      (id) => {
+        const { el } = createMarkerButton("venue-cluster");
+        el.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const source = map.getSource(VENUE_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
+          const at = clusters.entries.get(id)?.marker.getLngLat();
+          source?.getClusterExpansionZoom(id, (err, zoom) => {
+            if (err || zoom == null || !at) return;
+            // A programmatic move: it carries no originalEvent, so it does not
+            // offer "Search this area" (see moveend below).
+            map.easeTo({ center: at, zoom: zoom + 0.25, duration: panDuration() });
+          });
+        });
+        const pip = document.createElement("span");
+        pip.className = "venue-cluster-pip";
+        pip.setAttribute("aria-hidden", "true");
+        el.appendChild(pip);
+        return { el, marker: new mapboxgl.Marker({ element: el }) };
+      },
+      (marker) => marker.addTo(map),
+    );
+    pinsRef.current = pins;
+    clustersRef.current = clusters;
+    map.on("render", () => {
+      frameRef.current++;
+      renderMarkers();
+    });
+    // Cluster ids belong to one zoom level, so hidden bubbles pile up as the
+    // map zooms. Keep some for zooming back, and drop the rest once the map
+    // has settled (never mid-move: detaching markers is what made them jump).
+    map.on("moveend", () => {
+      if (clusters.hiddenCount() > MAX_HIDDEN_CLUSTERS) clusters.prune();
+    });
     map.addControl(new mapboxgl.AttributionControl({ compact: true }), "bottom-left");
     map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
     // Only moves the user made count for "Search this area". Gesture and
@@ -378,14 +364,12 @@ export default function MapView({
     const ro = new ResizeObserver(() => map.resize());
     ro.observe(containerRef.current);
 
-    const pins = pinsRef.current;
-    const clusters = clustersRef.current;
     return () => {
       ro.disconnect();
-      pins.forEach(({ marker }) => marker.remove());
-      clusters.forEach(({ marker }) => marker.remove());
       pins.clear();
       clusters.clear();
+      pinsRef.current = null;
+      clustersRef.current = null;
       map.remove();
       mapRef.current = null;
     };
@@ -432,6 +416,8 @@ export default function MapView({
     if (!map) return;
     const source = map.getSource(VENUE_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
     source?.setData(sourceData());
+    // Pins for venues that have left the data go for good.
+    pinsRef.current?.prune((id) => !venueById.current.has(id));
     renderMarkers();
     map.triggerRepaint();
   }, [venues, liveVenueIds, liveVenueCounts, selectedVenueId, selection, resolvedTheme, attempt, sourceData, renderMarkers]);

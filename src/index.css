@@ -183,11 +183,31 @@ All colors MUST be HSL.
 }
 
 /* ── Map markers ────────────────────────────────────────────────────────────
-   Venue pins and cluster bubbles are <button>s (see MapView). A visible
-   focus ring, and a 44px hit area on touch however small the pin is drawn. */
+   Venue pins and cluster bubbles are <button>s (see MapView and
+   lib/map-markers). A visible focus ring, and a 44px hit area on touch
+   however small the pin is drawn.
+
+   Mapbox moves a marker by setting `transform` on the button on every frame,
+   so the button itself must never transition or animate (it would ease
+   towards its spot instead of sticking to the map). Visual changes ease on
+   the inner .map-marker-face. */
 .venue-pin,
 .venue-cluster {
   cursor: pointer;
+}
+.map-marker-face {
+  box-sizing: border-box;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  font-weight: 700;
+  line-height: 1;
+  transition:
+    width 0.15s ease,
+    height 0.15s ease,
+    background-color 0.15s ease;
 }
 .venue-pin:focus-visible,
 .venue-cluster:focus-visible {
