@@ -20,6 +20,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Fail on high or critical advisories in runtime dependencies. Dev and
+      # build tooling is left out: it never ships to users.
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
