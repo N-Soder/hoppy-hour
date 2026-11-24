@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   groupHappyHours,
   formatDayRange,
+  groupByDaySet,
   ungroupHappyHour,
 } from "@/lib/happy-hour-utils";
 import type { HappyHour } from "@/hooks/use-venues";
@@ -45,8 +46,20 @@ describe("formatDayRange", () => {
     expect(formatDayRange([1, 2, 3, 4, 5])).toBe("Mon–Fri");
   });
 
-  it("formats all 7 days as Sun–Sat", () => {
-    expect(formatDayRange([0, 1, 2, 3, 4, 5, 6])).toBe("Sun–Sat");
+  it("formats all 7 days as Every day", () => {
+    expect(formatDayRange([0, 1, 2, 3, 4, 5, 6])).toBe("Every day");
+  });
+
+  it("lists days Monday-first, with Sunday last", () => {
+    expect(formatDayRange([0, 3])).toBe("Wed, Sun");
+  });
+
+  it("formats a non-contiguous set in week order", () => {
+    expect(formatDayRange([0, 2, 5])).toBe("Tue, Fri, Sun");
+  });
+
+  it("formats a six-day run that wraps the week", () => {
+    expect(formatDayRange([2, 3, 4, 5, 6, 0])).toBe("Tue–Sun");
   });
 
   it("handles non-contiguous 3-day set with commas", () => {
@@ -70,9 +83,9 @@ describe("formatDayRange", () => {
     expect(formatDayRange([6, 0, 1])).toBe("Sat–Mon");
   });
 
-  it("does NOT wrap Sun+Sat as a range (only 2 days)", () => {
+  it("lists Sat+Sun weekend in week order (only 2 days, no range)", () => {
     // [0, 6] — two days, not a run of 3+
-    expect(formatDayRange([0, 6])).toBe("Sun, Sat");
+    expect(formatDayRange([0, 6])).toBe("Sat, Sun");
   });
 });
 
@@ -176,5 +189,35 @@ describe("ungroupHappyHour", () => {
     expect(result).toHaveLength(1);
     expect(result[0].days_of_week).toEqual([4]);
     expect(result[0].tags).toBeNull();
+  });
+});
+
+// ─── groupByDaySet ───────────────────────────────────────────────────────────
+
+describe("groupByDaySet", () => {
+  const g = (days: number[], start: string, id: string) => ({
+    ids: [id],
+    venue_id: "v",
+    days_of_week: days,
+    start_time: start,
+    end_time: "23:00:00",
+    description: id,
+    tags: null,
+    is_active: true,
+  });
+
+  it("orders day groups Monday-first, with Sunday-only last", () => {
+    const out = groupByDaySet([g([0], "17:00:00", "sun"), g([3], "17:00:00", "wed"), g([1], "17:00:00", "mon")]);
+    expect(out.map((s) => s.deals[0].description)).toEqual(["mon", "wed", "sun"]);
+  });
+
+  it("puts a group containing Monday before a Tuesday-only group, even with Sunday in it", () => {
+    const out = groupByDaySet([g([2], "17:00:00", "tue"), g([0, 1], "17:00:00", "sun-mon")]);
+    expect(out.map((s) => s.deals[0].description)).toEqual(["sun-mon", "tue"]);
+  });
+
+  it("sorts deals in a group by start time", () => {
+    const out = groupByDaySet([g([1], "18:00:00", "late"), g([1], "09:00:00", "early")]);
+    expect(out[0].deals.map((d) => d.description)).toEqual(["early", "late"]);
   });
 });
