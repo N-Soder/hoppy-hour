@@ -26,6 +26,9 @@ export function useVenuesWithinRadius(
     },
     enabled: lng !== null && lat !== null,
     staleTime: STALE_TIME,
+    // Try once even when the browser says it is offline: the service worker
+    // may answer from its cache. Retries still wait for the connection.
+    networkMode: "offlineFirst",
   });
 }
 
