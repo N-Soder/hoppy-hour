@@ -132,6 +132,55 @@ export function dealSummary(d: { days_of_week: number[]; start_time: string; end
   return `${days}, ${formatTimeRange(d.start_time, d.end_time)}${next}`;
 }
 
+// ─── Splitting a deal ───────────────────────────────────────────────────────
+
+interface DealKeyFields {
+  start_time: string;
+  end_time: string;
+  description: string;
+  tags: string[] | null;
+  is_active: boolean;
+}
+
+/**
+ * True when two deals would be grouped as one in the editor (same times,
+ * description, tags and active state; days don't matter). Mirrors
+ * groupHappyHours and the server's dealGroupKey.
+ */
+export function sameDealFields(a: DealKeyFields, b: DealKeyFields): boolean {
+  const key = (d: DealKeyFields) =>
+    [
+      d.start_time.slice(0, 5),
+      d.end_time.slice(0, 5),
+      d.description.trim(),
+      (d.tags ?? []).map((t) => t.trim().toLowerCase()).sort().join(","),
+      d.is_active,
+    ].join("|");
+  return key(a) === key(b);
+}
+
+/**
+ * Why the days picked for a deal split off from `originalDays` don't work, or
+ * null. The new deal must take at least one of the original's days and leave
+ * it at least one.
+ */
+export function splitDaysError(originalDays: number[], newDays: number[]): string | null {
+  const taken = newDays.filter((d) => originalDays.includes(d));
+  if (taken.length === 0) return `Pick at least one of the original deal's days (${formatDayRange(originalDays)}).`;
+  if (taken.length === originalDays.length) {
+    return "Leave at least one day in the original deal. To change every day, edit the original instead.";
+  }
+  return null;
+}
+
+/** The original deal's days left after splitting `newDays` off it. */
+export function daysLeftAfterSplit(originalDays: number[], newDays: number[]): number[] {
+  return originalDays.filter((d) => !newDays.includes(d));
+}
+
+export const SPLIT_IDENTICAL =
+  "This is identical to the original deal, so it would be shown together with it. Change its times, description or tags, or cancel to keep one deal.";
+
 // ─── Coordinates ────────────────────────────────────────────────────────────
 
 export interface CoordInputs {
@@ -182,18 +231,32 @@ export function splitCoordPair(text: string): CoordInputs | null {
 
 /**
  * Where a review's pin came from:
- * - address: geocoded from a street address
- * - city:    only a city-centre fallback (the submitter's city pick, or a
- *            geocode of the city with no street address)
+ * - address: geocoded from a street address, and the match is a street
+ *            address or a named place (Mapbox "address"/"poi")
+ * - area:    a street lookup with no exact match: Mapbox's fuzzy fallback
+ *            matched only a town, suburb, postcode or region, or a different
+ *            street (low relevance), not the venue
+ * - city:    only a city-centre fallback (the submitter's city pick)
  * - upload:  sent with a Snap-a-Deal photo (device GPS or the picked city)
  * - manual:  typed in by the reviewer
  */
-export type PinSource = "address" | "city" | "upload" | "manual";
+export type PinSource = "address" | "area" | "city" | "upload" | "manual";
 
 export interface ReviewPin {
   coords: { lat: number; lng: number };
   country: string | null;
   source: PinSource;
+  /** What the geocoder matched, e.g. "12 Hay St, Perth WA 6000, Australia". */
+  matched?: string;
+}
+
+/**
+ * Only a looked-up street address or coordinates typed by the reviewer place
+ * a venue. Everything else is approximate and blocks approval; the approve
+ * endpoint enforces the same rule.
+ */
+export function isConfirmedPin(source: PinSource | null | undefined): boolean {
+  return source === "address" || source === "manual";
 }
 
 export function describePin(source: PinSource): { label: string; exact: boolean } {
@@ -202,11 +265,34 @@ export function describePin(source: PinSource): { label: string; exact: boolean 
       return { label: "Located from the address", exact: true };
     case "manual":
       return { label: "Entered by hand", exact: true };
+    case "area":
+      return { label: "Approximate (no exact match for the address)", exact: false };
     case "upload":
       return { label: "From the photo upload (device location or city)", exact: false };
     case "city":
       return { label: "Approximate (city centre)", exact: false };
   }
+}
+
+/** Mapbox place types that pin an actual venue rather than an area. */
+const PRECISE_PLACE_TYPES = new Set(["address", "poi"]);
+/**
+ * Below this Mapbox relevance an "address" match is a guess: "12 Example St,
+ * Perth" comes back as "Australia Ii Drive, Crawley" at 0.63, while real
+ * addresses score 1.
+ */
+export const MIN_ADDRESS_RELEVANCE = 0.9;
+
+/**
+ * Pin source for a street-address lookup result. Only an address or named
+ * place that Mapbox matched with high relevance counts as the address; a
+ * town, postcode or region, or a low-relevance guess, is only the area. A
+ * result with no type or relevance is trusted (the proxy passes both on).
+ */
+export function lookupPinSource(placeType: string | undefined, relevance?: number): PinSource {
+  if (placeType && !PRECISE_PLACE_TYPES.has(placeType)) return "area";
+  if (relevance != null && relevance < MIN_ADDRESS_RELEVANCE) return "area";
+  return "address";
 }
 
 /** Pin to start a review with, from what the submission carried. */
@@ -225,6 +311,16 @@ export function initialPin(sub: {
   };
 }
 
+/**
+ * A public-form submission that arrived with a typed city and no
+ * coordinates: the city search didn't recognise it. Its city must never be
+ * geocoded on its own, since Mapbox answers an unknown town with a fuzzy
+ * match somewhere else.
+ */
+export function cityUnrecognised(sub: Pick<Submission, "lat" | "lng" | "source">): boolean {
+  return sub.source === "form" && (sub.lat == null || sub.lng == null);
+}
+
 // ─── Approval ───────────────────────────────────────────────────────────────
 
 export interface ReviewDealInput {
@@ -239,23 +335,43 @@ export interface ApproveCheckInput {
   deals: ReviewDealInput[];
   /** Attaching to an existing venue instead of creating one. */
   attached: boolean;
-  /** With attached: also overwrite the venue's details (needs a location). */
+  /** With attached: also overwrite the venue's details. */
   updateAttachedDetails: boolean;
   attachedHasCoords: boolean;
-  hasPin: boolean;
+  /** Source of the current pin, or null when there is none. */
+  pin: PinSource | null;
   geocoding: boolean;
 }
+
+export const LOCATION_REQUIRED =
+  "A street address must be looked up, or coordinates entered, before this can be approved.";
 
 /** Why "Save & approve" is disabled, as sentences to show beside it. Empty = ready. */
 export function approveBlockers(i: ApproveCheckInput): string[] {
   const out: string[] = [];
   if (!i.venueName.trim()) out.push("Add the venue name.");
+  const confirmed = isConfirmedPin(i.pin);
   if (i.geocoding) {
     out.push("Looking up the address…");
-  } else if (!i.attached && !i.hasPin) {
-    out.push("Set a location: look up the address, or enter coordinates by hand.");
-  } else if (i.attached && i.updateAttachedDetails && !i.hasPin && !i.attachedHasCoords) {
-    out.push("The venue has no location yet: look up the address, or enter coordinates by hand.");
+  } else if (i.attached) {
+    // Attaching uses the venue's own location, unless the reviewer also
+    // replaces its details with a confirmed pin.
+    if (!i.attachedHasCoords && !(i.updateAttachedDetails && confirmed)) {
+      out.push(
+        i.updateAttachedDetails
+          ? `The venue has no location yet. ${LOCATION_REQUIRED}`
+          : "The venue has no location yet. Tick “Also replace…” and look up a street address or enter coordinates.",
+      );
+    }
+  } else if (!confirmed) {
+    const why: Record<PinSource, string> = {
+      city: "The pin is only the city centre.",
+      area: "The lookup found no exact match for the address.",
+      upload: "The pin is where the photo was uploaded from, or the city centre.",
+      address: "",
+      manual: "",
+    };
+    out.push(i.pin ? `${why[i.pin]} ${LOCATION_REQUIRED}` : LOCATION_REQUIRED);
   }
   if (i.deals.length === 0) out.push("Keep at least one deal.");
   i.deals.forEach((d, idx) => {
@@ -302,6 +418,30 @@ export function sortVenues(venues: Venue[], { key, dir }: VenueSort): Venue[] {
     return byName(a, b) * sign;
   };
   return [...venues].sort(cmp);
+}
+
+/** The phone-width sort select: every column sort, both directions, in words. */
+export const VENUE_SORT_OPTIONS: readonly (VenueSort & { label: string })[] = [
+  { key: "name", dir: "asc", label: "Name, A to Z" },
+  { key: "name", dir: "desc", label: "Name, Z to A" },
+  { key: "status", dir: "asc", label: "Active first" },
+  { key: "status", dir: "desc", label: "Inactive first" },
+  { key: "deals", dir: "desc", label: "Most deals first" },
+  { key: "deals", dir: "asc", label: "Fewest deals first" },
+];
+
+/**
+ * Keep the table's rows where they were. With the previous order's ids and
+ * the freshly sorted list: when both hold the same venues, return the fresh
+ * venue objects in the previous order (a status switch under a Status sort
+ * leaves its row in place); otherwise the fresh sort wins. Callers pass null
+ * after an explicit sort or search so it re-sorts.
+ */
+export function keepRowOrder<T extends { id: string }>(previousIds: string[] | null, sorted: T[]): T[] {
+  if (!previousIds || previousIds.length !== sorted.length) return sorted;
+  const byId = new Map(sorted.map((v) => [v.id, v]));
+  if (!previousIds.every((id) => byId.has(id))) return sorted;
+  return previousIds.map((id) => byId.get(id)!);
 }
 
 /** "62 venues", or "3 of 62 venues" while a search narrows the table. */

@@ -143,7 +143,7 @@ describe("approve", () => {
     insertPending("s");
     const res = await call(approve, {
       params: { id: "s" },
-      body: { venue: { name: "Bar", address: "Perth", country: "AU", ...PERTH }, happy_hours: [deal] },
+      body: { venue: { name: "Bar", address: "Perth", country: "AU", ...PERTH, location_source: "manual" }, happy_hours: [deal] },
     });
     expect(res.status).toBe(200);
     expect(zoneOf(((await res.json()) as { venue_id: string }).venue_id)).toBe("Australia/Perth");
@@ -153,18 +153,40 @@ describe("approve", () => {
     d1.exec(`INSERT INTO venues (id, name, address, lat, lng, timezone)
              VALUES ('v', 'V', '1 St', ${PERTH.lat}, ${PERTH.lng}, 'Etc/GMT-8')`);
     insertPending("same");
-    await call(approve, {
+    const kept = await call(approve, {
       params: { id: "same" },
-      body: { venue_id: "v", venue_update: { name: "V", address: "1 St", country: "AU", ...PERTH }, happy_hours: [deal] },
+      body: {
+        venue_id: "v",
+        venue_update: { name: "V", address: "1 St", country: "AU", ...PERTH, location_source: "venue" },
+        happy_hours: [deal],
+      },
     });
+    expect(kept.status).toBe(200);
     expect(zoneOf("v")).toBe("Etc/GMT-8");
 
     insertPending("moved");
-    await call(approve, {
+    const moved = await call(approve, {
       params: { id: "moved" },
-      body: { venue_id: "v", venue_update: { name: "V", address: "1 St", country: "AU", ...SYDNEY }, happy_hours: [deal] },
+      body: {
+        venue_id: "v",
+        venue_update: { name: "V", address: "1 St", country: "AU", ...SYDNEY, location_source: "address" },
+        happy_hours: [deal],
+      },
     });
+    expect(moved.status).toBe(200);
     expect(zoneOf("v")).toBe("Australia/Sydney");
+  });
+
+  it("fills a missing zone when attaching to an existing venue as-is, and leaves a set one alone", async () => {
+    d1.exec(`INSERT INTO venues (id, name, address, lat, lng, timezone)
+             VALUES ('empty', 'E', '1 St', ${PERTH.lat}, ${PERTH.lng}, NULL),
+                    ('fixed', 'F', '2 St', ${PERTH.lat}, ${PERTH.lng}, 'Etc/GMT-8')`);
+    insertPending("a");
+    insertPending("b");
+    expect((await call(approve, { params: { id: "a" }, body: { venue_id: "empty", happy_hours: [deal] } })).status).toBe(200);
+    expect((await call(approve, { params: { id: "b" }, body: { venue_id: "fixed", happy_hours: [deal] } })).status).toBe(200);
+    expect(zoneOf("empty")).toBe("Australia/Perth");
+    expect(zoneOf("fixed")).toBe("Etc/GMT-8");
   });
 });
 
@@ -208,7 +230,11 @@ describe("before migration 0005 is applied", () => {
     insertPending("s");
     const approved = await call(approve, {
       params: { id: "s" },
-      body: { venue_id: id, venue_update: { name: "P", address: "1 St", country: "AU", ...PERTH }, happy_hours: [deal] },
+      body: {
+        venue_id: id,
+        venue_update: { name: "P", address: "1 St", country: "AU", ...PERTH, location_source: "manual" },
+        happy_hours: [deal],
+      },
     });
     expect(approved.status).toBe(200);
     expect(d1.query(`SELECT status FROM submissions WHERE id = 's'`)).toEqual([{ status: "approved" }]);

@@ -46,7 +46,7 @@ const reviewOf = (id: string) =>
   )[0];
 
 const approveBody = {
-  venue: { name: "Bar", address: "Perth", country: "AU", lat: -31.95, lng: 115.86 },
+  venue: { name: "Bar", address: "Perth", country: "AU", lat: -31.95, lng: 115.86, location_source: "manual" },
   happy_hours: [{ days_of_week: [5], start_time: "17:00", end_time: "19:00", description: "Deal", tags: [] }],
 };
 

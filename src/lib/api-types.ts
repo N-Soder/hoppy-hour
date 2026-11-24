@@ -140,11 +140,29 @@ export interface ApproveDeal extends SubmissionDeal {
  * only valid with `venue_id`.
  */
 export interface ApproveInput {
-  venue?: { name: string; address: string; country: string | null; lat: number; lng: number };
+  venue?: ApproveVenue;
   venue_id?: string;
   /** Optional field updates applied to the existing venue on approve. */
-  venue_update?: { name: string; address: string; country: string | null; lat: number; lng: number };
+  venue_update?: ApproveVenue;
   happy_hours: ApproveDeal[];
+}
+
+/**
+ * How an approval's coordinates were confirmed. Approval needs a real
+ * location, never a city-centre fallback:
+ *  - address: a street address geocoded to an address or named place
+ *  - manual:  coordinates entered by the reviewer
+ *  - venue:   (venue_update only) the attached venue's existing coordinates
+ */
+export type ApproveLocationSource = "address" | "manual" | "venue";
+
+export interface ApproveVenue {
+  name: string;
+  address: string;
+  country: string | null;
+  lat: number;
+  lng: number;
+  location_source: ApproveLocationSource;
 }
 
 /** Body for POST /api/admin/submissions/from-image (admin photo upload). */

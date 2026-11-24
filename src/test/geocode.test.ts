@@ -65,6 +65,18 @@ describe("geocodeAddress", () => {
     expect(queryOf(mock, 0)).toBe("123 Hay St, Perth WA");
   });
 
+  it("passes on the match's type and full name so a town-only match can be told apart", async () => {
+    stubFetchResponses({
+      features: [{ center: [151.2, -33.8], place_type: ["place"], place_name: "Sydney, New South Wales, Australia" }],
+    });
+    expect(await geocodeAddress("", "12 Nowhere St, Madeupville")).toEqual({
+      coords: { lat: -33.8, lng: 151.2 },
+      country: null,
+      placeType: "place",
+      placeName: "Sydney, New South Wales, Australia",
+    });
+  });
+
   it("throws immediately when the geocode proxy surfaces a Mapbox API error", async () => {
     // Silence the diagnostic console.error the function emits on API errors
     vi.spyOn(console, "error").mockImplementation(() => {});
