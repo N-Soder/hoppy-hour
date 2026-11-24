@@ -79,6 +79,12 @@ describe("formatTimeRange", () => {
     expect(formatTimeRange("00:00", "23:59:59")).toBe("All day");
   });
 
+  it("reads a 23:59 end as late", () => {
+    expect(formatTimeRange("17:00:00", "23:59:00")).toBe("5 pm–late");
+    expect(formatTimeRange("11:30", "23:59")).toBe("11:30 am–late");
+    expect(formatTimeRange(1020, 1439)).toBe("5 pm–late");
+  });
+
   it("accepts picker minutes", () => {
     expect(formatTimeRange(1320, 1500)).toBe("10 pm–1 am");
   });

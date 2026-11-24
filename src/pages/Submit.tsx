@@ -38,6 +38,7 @@ import { scrollBehavior } from "@/lib/motion";
 import { MAX_DEALS_PER_SUBMISSION } from "@/lib/api-types";
 import {
   DEAL_PRESETS,
+  migrateLegacyAllDay,
   TIME_OPTIONS,
   bumpedEnd,
   minutesToClock,
@@ -335,7 +336,8 @@ export default function Submit() {
     (form.getValues("days_of_week") ?? []).length === 0 &&
     !form.getValues("description").trim();
 
-  const loadDealIntoEditor = (d: DealDraft) => {
+  const loadDealIntoEditor = (raw: DealDraft) => {
+    const d = migrateLegacyAllDay(raw);
     form.setValue("days_of_week", d.days_of_week);
     form.setValue("start_time", d.start_time);
     form.setValue("end_time", d.end_time);
@@ -416,7 +418,7 @@ export default function Submit() {
     // A restored location is an explicit choice — stop the passive GPS/IP
     // prefill from overwriting it a moment later.
     setLocationTouched(true);
-    setDeals(d.deals);
+    setDeals(d.deals.map(migrateLegacyAllDay));
     setOpenIndex(d.openIndex);
     loadDealIntoEditor(d.deals[d.openIndex]);
     setDraftOffer(null);
@@ -1047,7 +1049,10 @@ export default function Submit() {
                       </div>
 
                       {/* Adjustment row — revealed once a chip is tapped */}
-                      {activePreset !== null && (
+                      {activePreset === "all" && (
+                        <p className="mt-3 text-xs text-muted-foreground">{activeHint}</p>
+                      )}
+                      {activePreset !== null && activePreset !== "all" && (
                         <div className="mt-3">
                           <div className="flex items-center gap-2">
                             <select
