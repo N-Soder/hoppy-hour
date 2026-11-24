@@ -45,14 +45,27 @@ describe("describeEmptyState", () => {
     expect(c.canClear).toBe(true);
   });
 
+  it("offers to clear a non-default radius on its own", () => {
+    const c = describeEmptyState({ ...empty, radiusMeters: 1000 });
+    expect(c.title).toBe("No venues within 1 km");
+    expect(c.activeFilters).toEqual(["Within 1 km"]);
+    expect(c.canClear).toBe(true);
+  });
+
+  it("does not list the default radius as a filter", () => {
+    const c = describeEmptyState({ ...empty, tags: ["beer"], venuesInRadius: 4 });
+    expect(c.activeFilters).toEqual(["Beer"]);
+  });
+
   it("names every active filter", () => {
     const c = describeEmptyState({
       ...empty,
       searchQuery: "  bar ",
       tags: ["beer", "food"],
       whenPhrase: "Sat 5:15 pm",
+      radiusMeters: 3000,
       venuesInRadius: 3,
     });
-    expect(c.activeFilters).toEqual(["“bar”", "Beer, Food", "Sat 5:15 pm"]);
+    expect(c.activeFilters).toEqual(["“bar”", "Beer, Food", "Sat 5:15 pm", "Within 3 km"]);
   });
 });

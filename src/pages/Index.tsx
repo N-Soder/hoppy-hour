@@ -42,8 +42,8 @@ import { roundTo15 } from "@/lib/time";
 import { describeSelection, plural } from "@/lib/format";
 import { geoBanner, geoChip, hasRealLocation, isLocating } from "@/lib/geo-status";
 import { describeEmptyState, selectListState } from "@/lib/list-state";
-import { MAX_RADIUS, RADIUS_OPTIONS, formatDistanceRadius } from "@/lib/radius";
-import { countActiveFilters, fromDateParam, toDateParam } from "@/lib/url-state";
+import { DEFAULT_RADIUS, MAX_RADIUS, RADIUS_OPTIONS, formatDistanceRadius } from "@/lib/radius";
+import { clearedFilters, countActiveFilters, fromDateParam, toDateParam } from "@/lib/url-state";
 import { areaTimeZone, dealsOnAt, nextDealLabel, selectionInstant, venueClock } from "@/lib/venue-time";
 import { sameClock, viewerTimeZone, wallClockAsLocalDate, wallClockAt, zoneLabel } from "@/lib/zoned-time";
 import { scrollBehavior } from "@/lib/motion";
@@ -338,8 +338,14 @@ export default function Index() {
   const setMobileView = useCallback((view: "list" | "map") => updateUrl({ view }), [updateUrl]);
   const clearFilters = useCallback(() => {
     setNow(new Date());
-    updateUrl({ q: "", tags: [], date: null, time: null });
-  }, [updateUrl]);
+    updateUrl(clearedFilters(url));
+    // Say what the list now shows: when only the radius was narrowing it, the
+    // list may still be empty, and the change must not go unnoticed.
+    toast({
+      title: "Filters cleared",
+      description: `Showing every venue within ${formatDistanceRadius(DEFAULT_RADIUS)}, with deals on now.`,
+    });
+  }, [updateUrl, url, toast]);
   const activeFilterCount = countActiveFilters(url);
 
   // ── List state ───────────────────────────────────────────────────────
