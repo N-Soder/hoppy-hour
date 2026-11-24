@@ -21,10 +21,11 @@ import { formatDistance, plural } from "@/lib/format";
 import { geocodeAddress } from "@/lib/geocode";
 import { suggestVenueMatches } from "@/lib/venue-match";
 import {
-  approveBlockers, checkCoordInputs, dealSummary, dealsOf, describePin, endsNextDay, formatShortDate,
-  geocodeQuery, initialPin, readableError, splitCoordPair, type CoordInputs, type ReviewPin,
+  approveBlockers, checkCoordInputs, cityUnrecognised, dealSummary, dealsOf, describePin, endsNextDay,
+  formatShortDate, geocodeQuery, initialPin, isConfirmedPin, lookupPinSource, readableError, splitCoordPair,
+  type CoordInputs, type ReviewPin,
 } from "@/lib/admin";
-import type { ApproveDeal, ApproveInput, HappyHour, Submission, Venue } from "@/lib/api-types";
+import type { ApproveDeal, ApproveInput, ApproveLocationSource, HappyHour, Submission, Venue } from "@/lib/api-types";
 import { SubmissionDealList } from "./SubmissionDeals";
 
 /** Matches a CSS media query, updating on change. */
@@ -70,7 +71,9 @@ function OriginalSubmission({ sub }: { sub: Submission }) {
           {sub.lat != null && sub.lng != null ? (
             `${sub.lat.toFixed(5)}, ${sub.lng.toFixed(5)}`
           ) : (
-            <span className="font-sans text-sm text-muted-foreground">None (city not recognised)</span>
+            <span className="font-sans text-sm text-muted-foreground">
+              {sub.source === "form" ? "None (city not recognised)" : "None"}
+            </span>
           )}
         </dd>
         <dt className="text-muted-foreground">Source</dt>
@@ -190,6 +193,8 @@ export default function ReviewDialog({ submission: sub, onClose, onReject, focus
     attachedVenueId !== null ||
     updateVenueDetails ||
     pin?.source === "manual" ||
+    pin?.source === "address" ||
+    pin?.source === "area" ||
     manual.lat.trim() !== "" ||
     manual.lng.trim() !== "";
 
@@ -199,26 +204,34 @@ export default function ReviewDialog({ submission: sub, onClose, onReject, focus
   };
 
   // ── Location ──────────────────────────────────────────────────────────────
+  // Only a street address is looked up. A city on its own can only give a
+  // city-centre pin, which can't be approved; and an unrecognised typed city
+  // makes Mapbox answer with a fuzzy match somewhere else entirely.
+  const unrecognisedCity = cityUnrecognised(sub);
   const lookUp = async (addr: string) => {
-    const query = geocodeQuery(addr, sub);
-    if (!query) {
-      setLookupMessage("There's nothing to look up yet. Add a street address, or enter coordinates by hand.");
+    if (!addr.trim()) {
+      setLookupMessage("Add a street address to look up, or enter coordinates by hand.");
       setShowManual(true);
       return;
     }
+    const query = geocodeQuery(addr, sub);
     setGeocoding(true);
     setLookupMessage(null);
     try {
-      const { coords, country } = await geocodeAddress(name || sub.venue_name, query, sub.country);
+      const { coords, country, placeType, placeName } = await geocodeAddress(name || sub.venue_name, query, sub.country);
       if (coords) {
-        setPin({ coords, country: country ?? sub.country, source: addr.trim() ? "address" : "city" });
-        setShowManual(false);
+        const source = lookupPinSource(placeType);
+        setPin({ coords, country: country ?? sub.country, source, matched: placeName });
+        if (source === "area") {
+          setLookupMessage(
+            "Only the surrounding area was found, not the street address. Check the address, or enter the venue's coordinates by hand.",
+          );
+          setShowManual(true);
+        } else {
+          setShowManual(false);
+        }
       } else {
-        setLookupMessage(
-          addr.trim()
-            ? "Couldn't find that address. Check the spelling, or enter coordinates by hand."
-            : `Couldn't find “${sub.city ?? "the city"}”. Add a street address and look it up, or enter coordinates by hand.`,
-        );
+        setLookupMessage("Couldn't find that address. Check the spelling, or enter coordinates by hand.");
         setShowManual(true);
       }
     } catch (err) {
@@ -234,12 +247,22 @@ export default function ReviewDialog({ submission: sub, onClose, onReject, focus
     }
   };
 
-  // A submission without coordinates (typed city the lookup didn't know):
-  // try the address/city once when the dialog opens.
+  // A submission without coordinates but with a street address: try the
+  // address once when the dialog opens. Never the city on its own (see lookUp).
   useEffect(() => {
-    if (!initialPin(sub)) void lookUp(sub.venue_address ?? "");
+    if (!initialPin(sub) && sub.venue_address?.trim()) void lookUp(sub.venue_address);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Opening the coordinate fields for a photo's pin starts them at that pin,
+  // so a reviewer who knows the photo was taken at the venue confirms it in
+  // one step. A city-centre pin is never pre-filled.
+  const openManual = () => {
+    if (pin?.source === "upload" && !manual.lat && !manual.lng) {
+      setManual({ lat: String(pin.coords.lat), lng: String(pin.coords.lng) });
+    }
+    setShowManual(true);
+  };
 
   const manualCheck = checkCoordInputs(manual);
   const setManualField = (field: keyof CoordInputs, value: string) => {
@@ -288,7 +311,7 @@ export default function ReviewDialog({ submission: sub, onClose, onReject, focus
     attached: !!attachedVenueId,
     updateAttachedDetails: updateVenueDetails,
     attachedHasCoords: attachedVenue?.lat != null && attachedVenue?.lng != null,
-    hasPin: !!pin,
+    pin: pin?.source ?? null,
     geocoding,
   });
 
@@ -298,19 +321,37 @@ export default function ReviewDialog({ submission: sub, onClose, onReject, focus
       // Venues need a non-empty address: fall back to city (+ country).
       const venueAddress = address.trim() || [sub.city, countryName].filter(Boolean).join(", ") || name.trim();
       const happyHours = deals.map((d) => ({ ...d, description: d.description.trim() }));
+      // Only a confirmed pin (looked-up street address or typed coordinates)
+      // places a venue; the server enforces the same rule.
+      const confirmed = pin && isConfirmedPin(pin.source) ? pin : null;
+      const confirmedSource = confirmed?.source as ApproveLocationSource | undefined;
       let body: ApproveInput;
       if (attachedVenue) {
         body = { venue_id: attachedVenue.id, happy_hours: happyHours.map((d) => ({ ...d, replaces_id: d.replaces_id ?? null })) };
         if (updateVenueDetails) {
-          const lat = pin?.coords.lat ?? attachedVenue.lat;
-          const lng = pin?.coords.lng ?? attachedVenue.lng;
-          if (lat == null || lng == null) throw new Error("Set a location before updating the venue's details.");
-          body.venue_update = { name: name.trim(), address: venueAddress, country: pin?.country ?? attachedVenue.country, lat, lng };
+          if (confirmed && confirmedSource) {
+            body.venue_update = {
+              name: name.trim(), address: venueAddress, country: confirmed.country ?? attachedVenue.country,
+              lat: confirmed.coords.lat, lng: confirmed.coords.lng, location_source: confirmedSource,
+            };
+          } else if (attachedVenue.lat != null && attachedVenue.lng != null) {
+            body.venue_update = {
+              name: name.trim(), address: venueAddress, country: attachedVenue.country,
+              lat: attachedVenue.lat, lng: attachedVenue.lng, location_source: "venue",
+            };
+          } else {
+            throw new Error("The venue has no location yet. Look up a street address or enter coordinates.");
+          }
         }
       } else {
-        if (!pin) throw new Error("Set a location before approving.");
+        if (!confirmed || !confirmedSource) {
+          throw new Error("A street address must be looked up, or coordinates entered, before approving.");
+        }
         body = {
-          venue: { name: name.trim(), address: venueAddress, country: pin.country ?? sub.country, lat: pin.coords.lat, lng: pin.coords.lng },
+          venue: {
+            name: name.trim(), address: venueAddress, country: confirmed.country ?? sub.country,
+            lat: confirmed.coords.lat, lng: confirmed.coords.lng, location_source: confirmedSource,
+          },
           happy_hours: happyHours.map(({ replaces_id: _r, ...d }) => d),
         };
       }
@@ -397,7 +438,12 @@ export default function ReviewDialog({ submission: sub, onClose, onReject, focus
                 <span className="font-medium">Add to {venue.name}</span>
                 {distance_m != null && (
                   <Badge variant="secondary" className="ml-2 text-xs font-normal">
-                    {formatDistance(distance_m)} {pin && !describePin(pin.source).exact ? "from the city centre" : "away"}
+                    {formatDistance(distance_m)}{" "}
+                    {pin?.source === "city"
+                      ? "from the city centre"
+                      : pin && !describePin(pin.source).exact
+                        ? "from the approximate pin"
+                        : "away"}
                   </Badge>
                 )}
                 <span className="block truncate text-xs text-muted-foreground">{venue.address}</span>
@@ -438,7 +484,7 @@ export default function ReviewDialog({ submission: sub, onClose, onReject, focus
             type="button"
             variant="outline"
             onClick={() => lookUp(address)}
-            disabled={geocoding || (!address.trim() && !sub.city)}
+            disabled={geocoding || !address.trim()}
             className="shrink-0"
           >
             {geocoding ? <Loader2 className="animate-spin" aria-hidden="true" /> : <MapPin aria-hidden="true" />}
@@ -449,7 +495,7 @@ export default function ReviewDialog({ submission: sub, onClose, onReject, focus
           {sub.city || sub.country
             ? `Searched within ${[sub.city, countryByCode(sub.country)?.name].filter(Boolean).join(", ")}.`
             : "No city or country was given."}
-          {" "}Without a street address the venue is saved with the city as its address.
+          {" "}Approving needs the street address looked up, or coordinates entered.
         </p>
 
         <div aria-live="polite" className="space-y-2">
@@ -481,30 +527,46 @@ export default function ReviewDialog({ submission: sub, onClose, onReject, focus
               {!showManual && (
                 <button
                   type="button"
-                  className="text-xs text-muted-foreground underline underline-offset-2 hover:no-underline"
-                  onClick={() => setShowManual(true)}
+                  className="touch-target text-xs text-muted-foreground underline underline-offset-2 hover:no-underline"
+                  onClick={openManual}
                 >
                   Enter coordinates by hand
                 </button>
               )}
+              {pin.matched && (pin.source === "address" || pin.source === "area") && (
+                <p className="basis-full text-xs text-muted-foreground">Matched: {pin.matched}</p>
+              )}
               {!pinInfo.exact && (
                 <p className="basis-full text-xs text-muted-foreground">
                   {pin.source === "upload"
-                    ? "This is where the photo was uploaded from, or the picked city's centre. Check it on the map."
-                    : "The pin will sit at the centre of the city, not at the venue."}{" "}
+                    ? "This is where the photo was uploaded from, or the picked city's centre. If the photo was taken at the venue, open the coordinates and use them."
+                    : pin.source === "area"
+                      ? "The pin marks the area the lookup matched, not the venue."
+                      : "The pin is only the centre of the city, not the venue."}{" "}
                   {address.trim()
-                    ? "Look up the street address, or enter the venue's coordinates, to place it exactly."
-                    : "Add a street address and look it up, or enter the venue's coordinates, to place it exactly."}
+                    ? "Look up the street address, or enter the venue's coordinates, before approving."
+                    : "Add a street address and look it up, or enter the venue's coordinates, before approving."}
                 </p>
               )}
+            </div>
+          ) : unrecognisedCity && !lookupMessage ? (
+            <div className="text-sm text-amber-700 dark:text-amber-400">
+              <p className="flex items-start gap-1.5 font-medium">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                City not recognised — set the location
+              </p>
+              <p className="mt-0.5 pl-[1.375rem] text-xs text-muted-foreground">
+                “{sub.city ?? "The typed city"}” wasn't found by the city search, so this submission has no pin. Add
+                the street address and look it up, or enter the venue's coordinates by hand.
+              </p>
             </div>
           ) : (
             <p className="flex items-start gap-1.5 text-sm text-amber-700 dark:text-amber-400">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
               {lookupMessage ??
                 (sub.lat == null
-                  ? "This submission arrived without a location. Look up the address or enter coordinates by hand."
-                  : "No location set. Look up the address or enter coordinates by hand.")}
+                  ? "This submission arrived without a location. Look up the street address or enter coordinates by hand."
+                  : "No location set. Look up the street address or enter coordinates by hand.")}
             </p>
           )}
           {pin && lookupMessage && !geocoding && !usingAttachedCoords && (
@@ -515,8 +577,8 @@ export default function ReviewDialog({ submission: sub, onClose, onReject, focus
         {!usingAttachedCoords && !showManual && !pin && !geocoding && (
           <button
             type="button"
-            className="text-sm text-primary underline underline-offset-2 hover:no-underline"
-            onClick={() => setShowManual(true)}
+            className="touch-target text-sm text-primary underline underline-offset-2 hover:no-underline"
+            onClick={openManual}
           >
             Enter coordinates by hand
           </button>

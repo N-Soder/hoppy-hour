@@ -33,13 +33,14 @@ function insertSubmission(id: string, status: string, extra: Partial<Record<stri
     country: "AU",
     lat: null as number | null,
     lng: null as number | null,
+    source: "form",
     ...extra,
   };
   d1.query(
     `INSERT INTO submissions (id, venue_name, venue_address, city, country, lat, lng, days_of_week,
-                              start_time, end_time, description, tags, status)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, '[5,6]', '22:00:00', '02:00:00', 'Late deal', '[]', ?8)`,
-    id, row.venue_name, row.venue_address, row.city, row.country, row.lat, row.lng, status,
+                              start_time, end_time, description, tags, status, source)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, '[5,6]', '22:00:00', '02:00:00', 'Late deal', '[]', ?8, ?9)`,
+    id, row.venue_name, row.venue_address, row.city, row.country, row.lat, row.lng, status, row.source,
   );
 }
 
@@ -81,7 +82,10 @@ describe("approve", () => {
     const res = await call(approve, {
       params: { id: "s2" },
       body: {
-        venue: { name: "Test Venue", address: "Testville, Australia", country: "AU", lat: -31.9, lng: 115.8 },
+        venue: {
+          name: "Test Venue", address: "Testville, Australia", country: "AU", lat: -31.9, lng: 115.8,
+          location_source: "manual",
+        },
         happy_hours: [{ days_of_week: [5, 6], start_time: "22:00", end_time: "02:00", description: "Late deal", tags: [] }],
       },
     });
@@ -106,6 +110,85 @@ describe("approve", () => {
     });
     expect(res.status).toBe(400);
     expect(statusOf("s3")).toBe("pending");
+  });
+});
+
+describe("approve needs a confirmed location", () => {
+  const deal = { days_of_week: [5], start_time: "17:00", end_time: "18:00", description: "x", tags: [] };
+  const venue = (extra: Record<string, unknown> = {}) => ({
+    name: "Test Venue", address: "1 Real St, Testville", country: "AU", lat: -31.95, lng: 115.86,
+    location_source: "address", ...extra,
+  });
+  const approveWith = (id: string, body: Record<string, unknown>) =>
+    call(approve, { params: { id }, body: { happy_hours: [deal], ...body } });
+  const errorOf = async (res: Response) => ((await res.json()) as { error: string }).error;
+  const venueCount = () => d1.query<{ n: number }>(`SELECT COUNT(*) AS n FROM venues`)[0].n;
+
+  it("refuses a new venue without location_source, or with an unconfirmed one", async () => {
+    insertSubmission("s", "pending", { lat: -32, lng: 115 });
+    for (const location_source of [undefined, "city", "upload", "venue"]) {
+      const res = await approveWith("s", { venue: venue({ location_source }) });
+      expect(res.status).toBe(400);
+      expect(await errorOf(res)).toMatch(/confirmed location is required/);
+    }
+    expect(statusOf("s")).toBe("pending");
+    expect(venueCount()).toBe(0);
+  });
+
+  it("refuses a form submission's own city-centre coordinates even when labelled as confirmed", async () => {
+    insertSubmission("s", "pending", { lat: -31.95, lng: 115.86 });
+    const res = await approveWith("s", { venue: venue({ location_source: "manual" }) });
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toMatch(/city-centre coordinates/);
+    expect(statusOf("s")).toBe("pending");
+    expect(venueCount()).toBe(0);
+  });
+
+  it("accepts a photo submission's own coordinates once the reviewer enters them", async () => {
+    insertSubmission("p", "pending", { lat: -31.95, lng: 115.86, source: "photo" });
+    const res = await approveWith("p", { venue: venue({ location_source: "manual" }) });
+    expect(res.status).toBe(200);
+    expect(statusOf("p")).toBe("approved");
+  });
+
+  it("approves a new venue at a geocoded street address", async () => {
+    insertSubmission("s", "pending", { lat: -32, lng: 115 });
+    const res = await approveWith("s", { venue: venue() });
+    expect(res.status).toBe(200);
+    expect(d1.query(`SELECT lat, lng FROM venues`)).toEqual([{ lat: -31.95, lng: 115.86 }]);
+  });
+
+  it("allows attaching to an existing venue with a location, using that location", async () => {
+    d1.exec(`INSERT INTO venues (id, name, address, lat, lng) VALUES ('v1', 'One', '1 St', -31.9, 115.8)`);
+    insertSubmission("s", "pending");
+    const res = await approveWith("s", { venue_id: "v1" });
+    expect(res.status).toBe(200);
+    expect(d1.query(`SELECT lat, lng FROM venues WHERE id = 'v1'`)).toEqual([{ lat: -31.9, lng: 115.8 }]);
+  });
+
+  it("refuses attaching to a venue that has no location", async () => {
+    d1.exec(`INSERT INTO venues (id, name, address) VALUES ('v1', 'One', '1 St')`);
+    insertSubmission("s", "pending");
+    const res = await approveWith("s", { venue_id: "v1" });
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toMatch(/venue has no location/);
+    expect(statusOf("s")).toBe("pending");
+  });
+
+  it("venue_update keeps the venue's own coordinates with location_source venue, and only those", async () => {
+    d1.exec(`INSERT INTO venues (id, name, address, lat, lng) VALUES ('v1', 'One', '1 St', -31.9, 115.8)`);
+    insertSubmission("s", "pending", { lat: -32, lng: 115 });
+    const moved = await approveWith("s", {
+      venue_id: "v1", venue_update: venue({ lat: -32, lng: 115, location_source: "venue" }),
+    });
+    expect(moved.status).toBe(400);
+    const kept = await approveWith("s", {
+      venue_id: "v1", venue_update: venue({ name: "One Renamed", lat: -31.9, lng: 115.8, location_source: "venue" }),
+    });
+    expect(kept.status).toBe(200);
+    expect(d1.query(`SELECT name, lat, lng FROM venues WHERE id = 'v1'`)).toEqual([
+      { name: "One Renamed", lat: -31.9, lng: 115.8 },
+    ]);
   });
 });
 

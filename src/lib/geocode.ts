@@ -1,5 +1,16 @@
 export type Coords = { lat: number; lng: number };
-export type GeocodeResult = { coords: Coords | null; country: string | null };
+export type GeocodeResult = {
+  coords: Coords | null;
+  country: string | null;
+  /**
+   * Mapbox's type for the match ("address", "poi", "place", "locality", …),
+   * when it gave one. A street lookup that comes back as a "place" matched
+   * only a town, not the street.
+   */
+  placeType?: string;
+  /** Mapbox's full name for the match, so a reviewer can see what was found. */
+  placeName?: string;
+};
 
 import { COUNTRIES } from "./countries";
 
@@ -88,7 +99,14 @@ export async function geocodeAddress(
       const feature = data?.features?.[0];
       if (feature?.center) {
         const [lng, lat] = feature.center;
-        return { coords: { lat, lng }, country: countryCodeFromContext(feature.context) };
+        const placeType: unknown = feature.place_type?.[0];
+        const placeName: unknown = feature.place_name;
+        return {
+          coords: { lat, lng },
+          country: countryCodeFromContext(feature.context),
+          ...(typeof placeType === "string" ? { placeType } : {}),
+          ...(typeof placeName === "string" ? { placeName } : {}),
+        };
       }
     } catch (err) {
       // Re-throw Mapbox API errors (token issues) — don't swallow them

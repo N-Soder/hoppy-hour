@@ -166,18 +166,31 @@ export function splitCoordPair(text: string): CoordInputs | null {
 
 /**
  * Where a review's pin came from:
- * - address: geocoded from a street address
- * - city:    only a city-centre fallback (the submitter's city pick, or a
- *            geocode of the city with no street address)
+ * - address: geocoded from a street address, and the match is a street
+ *            address or a named place (Mapbox "address"/"poi")
+ * - area:    a street lookup that only matched a town, suburb, postcode or
+ *            region: Mapbox's fuzzy fallback, not the venue
+ * - city:    only a city-centre fallback (the submitter's city pick)
  * - upload:  sent with a Snap-a-Deal photo (device GPS or the picked city)
  * - manual:  typed in by the reviewer
  */
-export type PinSource = "address" | "city" | "upload" | "manual";
+export type PinSource = "address" | "area" | "city" | "upload" | "manual";
 
 export interface ReviewPin {
   coords: { lat: number; lng: number };
   country: string | null;
   source: PinSource;
+  /** What the geocoder matched, e.g. "12 Hay St, Perth WA 6000, Australia". */
+  matched?: string;
+}
+
+/**
+ * Only a looked-up street address or coordinates typed by the reviewer place
+ * a venue. Everything else is approximate and blocks approval; the approve
+ * endpoint enforces the same rule.
+ */
+export function isConfirmedPin(source: PinSource | null | undefined): boolean {
+  return source === "address" || source === "manual";
 }
 
 export function describePin(source: PinSource): { label: string; exact: boolean } {
@@ -186,11 +199,25 @@ export function describePin(source: PinSource): { label: string; exact: boolean 
       return { label: "Located from the address", exact: true };
     case "manual":
       return { label: "Entered by hand", exact: true };
+    case "area":
+      return { label: "Approximate (the address wasn't found, only the area)", exact: false };
     case "upload":
       return { label: "From the photo upload (device location or city)", exact: false };
     case "city":
       return { label: "Approximate (city centre)", exact: false };
   }
+}
+
+/** Mapbox place types that pin an actual venue rather than an area. */
+const PRECISE_PLACE_TYPES = new Set(["address", "poi"]);
+
+/**
+ * Pin source for a street-address lookup result. A result with no type is
+ * trusted (older proxies didn't pass it on); a town, postcode or region match
+ * is only the area.
+ */
+export function lookupPinSource(placeType: string | undefined): PinSource {
+  return !placeType || PRECISE_PLACE_TYPES.has(placeType) ? "address" : "area";
 }
 
 /** Pin to start a review with, from what the submission carried. */
@@ -209,6 +236,16 @@ export function initialPin(sub: {
   };
 }
 
+/**
+ * A public-form submission that arrived with a typed city and no
+ * coordinates: the city search didn't recognise it. Its city must never be
+ * geocoded on its own, since Mapbox answers an unknown town with a fuzzy
+ * match somewhere else.
+ */
+export function cityUnrecognised(sub: Pick<Submission, "lat" | "lng" | "source">): boolean {
+  return sub.source === "form" && (sub.lat == null || sub.lng == null);
+}
+
 // ─── Approval ───────────────────────────────────────────────────────────────
 
 export interface ReviewDealInput {
@@ -223,23 +260,43 @@ export interface ApproveCheckInput {
   deals: ReviewDealInput[];
   /** Attaching to an existing venue instead of creating one. */
   attached: boolean;
-  /** With attached: also overwrite the venue's details (needs a location). */
+  /** With attached: also overwrite the venue's details. */
   updateAttachedDetails: boolean;
   attachedHasCoords: boolean;
-  hasPin: boolean;
+  /** Source of the current pin, or null when there is none. */
+  pin: PinSource | null;
   geocoding: boolean;
 }
+
+export const LOCATION_REQUIRED =
+  "A street address must be looked up, or coordinates entered, before this can be approved.";
 
 /** Why "Save & approve" is disabled, as sentences to show beside it. Empty = ready. */
 export function approveBlockers(i: ApproveCheckInput): string[] {
   const out: string[] = [];
   if (!i.venueName.trim()) out.push("Add the venue name.");
+  const confirmed = isConfirmedPin(i.pin);
   if (i.geocoding) {
     out.push("Looking up the address…");
-  } else if (!i.attached && !i.hasPin) {
-    out.push("Set a location: look up the address, or enter coordinates by hand.");
-  } else if (i.attached && i.updateAttachedDetails && !i.hasPin && !i.attachedHasCoords) {
-    out.push("The venue has no location yet: look up the address, or enter coordinates by hand.");
+  } else if (i.attached) {
+    // Attaching uses the venue's own location, unless the reviewer also
+    // replaces its details with a confirmed pin.
+    if (!i.attachedHasCoords && !(i.updateAttachedDetails && confirmed)) {
+      out.push(
+        i.updateAttachedDetails
+          ? `The venue has no location yet. ${LOCATION_REQUIRED}`
+          : "The venue has no location yet. Tick “Also replace…” and look up a street address or enter coordinates.",
+      );
+    }
+  } else if (!confirmed) {
+    const why: Record<PinSource, string> = {
+      city: "The pin is only the city centre.",
+      area: "The address wasn't found, only the area around it.",
+      upload: "The pin is where the photo was uploaded from, or the city centre.",
+      address: "",
+      manual: "",
+    };
+    out.push(i.pin ? `${why[i.pin]} ${LOCATION_REQUIRED}` : LOCATION_REQUIRED);
   }
   if (i.deals.length === 0) out.push("Keep at least one deal.");
   i.deals.forEach((d, idx) => {

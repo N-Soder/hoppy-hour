@@ -3,6 +3,10 @@ import { ApiError } from "@/lib/api";
 import {
   approveBlockers,
   checkCoordInputs,
+  cityUnrecognised,
+  isConfirmedPin,
+  LOCATION_REQUIRED,
+  lookupPinSource,
   dealSummary,
   dealTimeError,
   describePin,
@@ -106,6 +110,29 @@ describe("review pin", () => {
   it("has no pin when the submission arrived without coordinates", () => {
     expect(initialPin({ lat: null, lng: null, country: "AU", source: "form" })).toBeNull();
   });
+
+  it("treats only a looked-up street address or typed coordinates as confirmed", () => {
+    expect(isConfirmedPin("address")).toBe(true);
+    expect(isConfirmedPin("manual")).toBe(true);
+    for (const s of ["city", "area", "upload", null] as const) expect(isConfirmedPin(s)).toBe(false);
+  });
+
+  it("counts a street lookup that only matched a town or postcode as the area, not the address", () => {
+    expect(lookupPinSource("address")).toBe("address");
+    expect(lookupPinSource("poi")).toBe("address");
+    expect(lookupPinSource(undefined)).toBe("address");
+    for (const t of ["place", "locality", "postcode", "region", "district", "country", "neighborhood"]) {
+      expect(lookupPinSource(t)).toBe("area");
+    }
+    expect(describePin("area").exact).toBe(false);
+  });
+
+  it("flags a form submission whose typed city wasn't recognised", () => {
+    expect(cityUnrecognised({ lat: null, lng: null, source: "form" })).toBe(true);
+    expect(cityUnrecognised({ lat: -31.9, lng: 115.8, source: "form" })).toBe(false);
+    // A photo with no location simply has none: the city may well be real.
+    expect(cityUnrecognised({ lat: null, lng: null, source: "photo" })).toBe(false);
+  });
 });
 
 describe("approveBlockers", () => {
@@ -115,7 +142,7 @@ describe("approveBlockers", () => {
     attached: false,
     updateAttachedDetails: false,
     attachedHasCoords: false,
-    hasPin: true,
+    pin: "address",
     geocoding: false,
   };
 
@@ -124,13 +151,32 @@ describe("approveBlockers", () => {
   });
 
   it("requires a location for a new venue (null-coordinate submissions)", () => {
-    expect(approveBlockers({ ...ready, hasPin: false })).toEqual([
-      "Set a location: look up the address, or enter coordinates by hand.",
-    ]);
+    expect(approveBlockers({ ...ready, pin: null })).toEqual([LOCATION_REQUIRED]);
+  });
+
+  it("blocks a city-centre, area-only or photo pin with a sentence naming why", () => {
+    expect(approveBlockers({ ...ready, pin: "city" })).toEqual([`The pin is only the city centre. ${LOCATION_REQUIRED}`]);
+    expect(approveBlockers({ ...ready, pin: "area" })[0]).toMatch(/^The address wasn't found, only the area/);
+    expect(approveBlockers({ ...ready, pin: "upload" })[0]).toMatch(/photo was uploaded from/);
+    expect(approveBlockers({ ...ready, pin: "manual" })).toEqual([]);
+    expect(LOCATION_REQUIRED).toMatch(/street address must be looked up, or coordinates entered/);
   });
 
   it("does not need a location when attaching to a venue that has one", () => {
-    expect(approveBlockers({ ...ready, hasPin: false, attached: true, attachedHasCoords: true })).toEqual([]);
+    expect(approveBlockers({ ...ready, pin: null, attached: true, attachedHasCoords: true })).toEqual([]);
+    expect(approveBlockers({ ...ready, pin: "city", attached: true, attachedHasCoords: true })).toEqual([]);
+    // Replacing its details keeps the venue's own location when the pin is approximate.
+    expect(
+      approveBlockers({ ...ready, pin: "city", attached: true, attachedHasCoords: true, updateAttachedDetails: true }),
+    ).toEqual([]);
+  });
+
+  it("blocks attaching to a venue with no location unless a confirmed pin replaces it", () => {
+    expect(approveBlockers({ ...ready, pin: "address", attached: true })[0]).toMatch(/venue has no location yet/);
+    expect(
+      approveBlockers({ ...ready, pin: "city", attached: true, updateAttachedDetails: true })[0],
+    ).toMatch(/venue has no location yet/);
+    expect(approveBlockers({ ...ready, pin: "address", attached: true, updateAttachedDetails: true })).toEqual([]);
   });
 
   it("names each incomplete deal", () => {

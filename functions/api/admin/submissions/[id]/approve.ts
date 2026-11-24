@@ -8,6 +8,13 @@
 //        active happy hour that the incoming deal supersedes — corrections
 //        ("now 4-7, not 3-6") replace instead of piling up duplicates.
 //
+// Location: approval needs a real location. A new venue (or a venue_update)
+// must say how its coordinates were confirmed (`location_source`: a geocoded
+// street address or coordinates entered by hand), and a public-form
+// submission's own coordinates, which are only the picked city's centre, are
+// refused outright. Attaching without venue_update uses the venue's location,
+// so that venue must have one.
+//
 // Atomicity: venue insert/update + happy-hour inserts + replacement
 // deactivations + guarded status flip are ONE D1 batch —
 // all-or-nothing, coordinates ride in the venue INSERT.
@@ -23,8 +30,12 @@
 import type { Env } from "../../../../_shared/db";
 import { nowIso, toHms } from "../../../../_shared/db";
 import { error, json, readJson } from "../../../../_shared/http";
-import { normalizeTags, validateDealFields, isStringLen } from "../../../../_shared/validate";
-import { MAX_DEALS_PER_SUBMISSION, type ApproveInput } from "../../../../../src/lib/api-types";
+import { normalizeTags, validateDealFields, isStringLen, isLatLng } from "../../../../_shared/validate";
+import {
+  MAX_DEALS_PER_SUBMISSION, type ApproveInput, type ApproveLocationSource,
+} from "../../../../../src/lib/api-types";
+
+const LOCATION_REQUIRED = "a confirmed location is required: geocode a street address or enter coordinates";
 
 interface VenueRow {
   id: string;
@@ -35,14 +46,24 @@ interface VenueRow {
   lng: number | null;
 }
 
-function validateVenueFields(v: NonNullable<ApproveInput["venue"]>, label: string): Response | null {
+function validateVenueFields(
+  v: NonNullable<ApproveInput["venue"]>,
+  label: string,
+  allowed: readonly ApproveLocationSource[],
+): Response | null {
   if (!isStringLen(v.name, 200)) return error(`${label}.name is required (max 200)`, 400);
   if (!isStringLen(v.address, 500)) return error(`${label}.address is required (max 500)`, 400);
-  if (typeof v.lat !== "number" || typeof v.lng !== "number") {
-    return error(`${label}.lat and ${label}.lng are required`, 400);
+  if (!isLatLng(v.lat, v.lng)) {
+    return error(`${label}.lat and ${label}.lng are required; ${LOCATION_REQUIRED}`, 400);
+  }
+  if (!allowed.includes(v.location_source)) {
+    return error(`${label}.location_source must be one of ${allowed.join(", ")}; ${LOCATION_REQUIRED}`, 400);
   }
   return null;
 }
+
+const sameSpot = (a: { lat: number | null; lng: number | null }, b: { lat: number; lng: number }) =>
+  a.lat != null && a.lng != null && Math.abs(a.lat - b.lat) < 1e-6 && Math.abs(a.lng - b.lng) < 1e-6;
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }) => {
   const id = params.id as string;
@@ -78,20 +99,27 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
   }
 
   if (hasVenue) {
-    const venueErr = validateVenueFields(b.venue!, "venue");
+    const venueErr = validateVenueFields(b.venue!, "venue", ["address", "manual"]);
     if (venueErr) return venueErr;
   }
   if (b.venue_update) {
-    const updateErr = validateVenueFields(b.venue_update, "venue_update");
+    const updateErr = validateVenueFields(b.venue_update, "venue_update", ["address", "manual", "venue"]);
     if (updateErr) return updateErr;
   }
 
   // Preflight so re-approving an already-processed submission fails cleanly
   // before we insert anything.
-  const row = await env.DB.prepare(`SELECT status FROM submissions WHERE id = ?1`).bind(id)
-    .first<{ status: string }>();
+  const row = await env.DB.prepare(`SELECT status, source, lat, lng FROM submissions WHERE id = ?1`).bind(id)
+    .first<{ status: string; source: string; lat: number | null; lng: number | null }>();
   if (!row) return error("submission not found", 404);
   if (row.status !== "pending") return error(`already ${row.status}`, 409);
+
+  // A public-form submission's coordinates are its city's centre: never a
+  // venue's location, whatever location_source claims.
+  const placed = b.venue ?? (b.venue_update?.location_source !== "venue" ? b.venue_update : undefined);
+  if (placed && row.source === "form" && sameSpot(row, placed)) {
+    return error(`these are the city-centre coordinates the submission arrived with; ${LOCATION_REQUIRED}`, 400);
+  }
 
   // Existing-venue mode: the venue must exist, and every replacement target
   // must be one of ITS currently-active happy hours. Capturing the venue row
@@ -102,6 +130,12 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
       `SELECT id, name, address, country, lat, lng FROM venues WHERE id = ?1`,
     ).bind(b.venue_id).first<VenueRow>();
     if (!existingVenue) return error("venue not found", 404);
+    if (b.venue_update?.location_source === "venue" && !sameSpot(existingVenue, b.venue_update)) {
+      return error(`venue_update with location_source "venue" must keep the venue's coordinates; ${LOCATION_REQUIRED}`, 400);
+    }
+    if (!b.venue_update && (existingVenue.lat == null || existingVenue.lng == null)) {
+      return error(`the venue has no location yet; ${LOCATION_REQUIRED}`, 400);
+    }
 
     if (replacesIds.length > 0) {
       const placeholders = replacesIds.map((_, i) => `?${i + 2}`).join(",");
