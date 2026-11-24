@@ -116,6 +116,55 @@ export function dealSummary(d: { days_of_week: number[]; start_time: string; end
   return `${days}, ${formatTimeRange(d.start_time, d.end_time)}${next}`;
 }
 
+// ─── Splitting a deal ───────────────────────────────────────────────────────
+
+interface DealKeyFields {
+  start_time: string;
+  end_time: string;
+  description: string;
+  tags: string[] | null;
+  is_active: boolean;
+}
+
+/**
+ * True when two deals would be grouped as one in the editor (same times,
+ * description, tags and active state; days don't matter). Mirrors
+ * groupHappyHours and the server's dealGroupKey.
+ */
+export function sameDealFields(a: DealKeyFields, b: DealKeyFields): boolean {
+  const key = (d: DealKeyFields) =>
+    [
+      d.start_time.slice(0, 5),
+      d.end_time.slice(0, 5),
+      d.description.trim(),
+      (d.tags ?? []).map((t) => t.trim().toLowerCase()).sort().join(","),
+      d.is_active,
+    ].join("|");
+  return key(a) === key(b);
+}
+
+/**
+ * Why the days picked for a deal split off from `originalDays` don't work, or
+ * null. The new deal must take at least one of the original's days and leave
+ * it at least one.
+ */
+export function splitDaysError(originalDays: number[], newDays: number[]): string | null {
+  const taken = newDays.filter((d) => originalDays.includes(d));
+  if (taken.length === 0) return `Pick at least one of the original deal's days (${formatDayRange(originalDays)}).`;
+  if (taken.length === originalDays.length) {
+    return "Leave at least one day in the original deal. To change every day, edit the original instead.";
+  }
+  return null;
+}
+
+/** The original deal's days left after splitting `newDays` off it. */
+export function daysLeftAfterSplit(originalDays: number[], newDays: number[]): number[] {
+  return originalDays.filter((d) => !newDays.includes(d));
+}
+
+export const SPLIT_IDENTICAL =
+  "This is identical to the original deal, so it would be shown together with it. Change its times, description or tags, or cancel to keep one deal.";
+
 // ─── Coordinates ────────────────────────────────────────────────────────────
 
 export interface CoordInputs {

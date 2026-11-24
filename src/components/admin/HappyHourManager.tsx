@@ -1,7 +1,7 @@
 import { useId, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Pencil, Plus, Scissors, Trash2 } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -9,15 +9,18 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Chip } from "@/components/ui/chip";
 import { useToast } from "@/hooks/use-toast";
-import { VALID_TAGS, WEEK_DAYS, DAYS_SHORT, sortDaysInWeekOrder } from "@/lib/constants";
+import { VALID_TAGS, WEEK_DAYS } from "@/lib/constants";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import type { HappyHour } from "@/hooks/use-venues";
-import { groupHappyHours, ungroupHappyHour, type GroupedHappyHour } from "@/lib/happy-hour-utils";
-import { formatTimeRange } from "@/lib/format";
-import { dealSummary, dealTimeError, endsNextDay, readableError } from "@/lib/admin";
+import { formatDayRange, groupHappyHours, type GroupedHappyHour } from "@/lib/happy-hour-utils";
+import { formatTimeRange, plural } from "@/lib/format";
+import {
+  daysLeftAfterSplit, dealSummary, dealTimeError, endsNextDay, readableError, sameDealFields, SPLIT_IDENTICAL,
+  splitDaysError,
+} from "@/lib/admin";
 import { AdminErrorState, AdminLoading } from "./AdminStates";
 import { DealWhen } from "./SubmissionDeals";
 
@@ -52,7 +55,11 @@ export default function HappyHourManager({ venueId, venueName }: { venueId: stri
   const [form, setForm] = useState<HHForm>(emptyHHForm);
   const [attempted, setAttempted] = useState(false);
   const [pendingDeleteGroup, setPendingDeleteGroup] = useState<GroupedHappyHour | null>(null);
-  const [pendingSplitGroup, setPendingSplitGroup] = useState<GroupedHappyHour | null>(null);
+  // Split: first pick the days to take out (splitPick), then edit them as a
+  // new deal (splitFrom) before anything is saved.
+  const [splitPick, setSplitPick] = useState<GroupedHappyHour | null>(null);
+  const [pickedDays, setPickedDays] = useState<number[]>([]);
+  const [splitFrom, setSplitFrom] = useState<GroupedHappyHour | null>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const ids = useId();
@@ -125,30 +132,54 @@ export default function HappyHourManager({ venueId, venueName }: { venueId: stri
   });
 
   const splitGroupHH = useMutation({
-    // Server deletes the source records and inserts the per-day records atomically
-    mutationFn: (group: GroupedHappyHour) =>
-      api.post("/api/admin/happy-hours/split", { ids: group.ids, records: ungroupHappyHour(group) }),
-    onSuccess: (_r, group) => {
+    // Server takes the days out of the original records and inserts the new
+    // deal in one batch; it refuses a new deal identical to the original.
+    mutationFn: ({ group, form: f }: { group: GroupedHappyHour; form: HHForm }) =>
+      api.post("/api/admin/happy-hours/split", { ids: group.ids, record: body(f) }),
+    onSuccess: (_r, { group, form: f }) => {
       invalidate();
+      const left = daysLeftAfterSplit(group.days_of_week, f.days_of_week);
       toast({
-        title: `Split into ${group.days_of_week.length} single-day records`,
-        description: `${dealName(group)} is now stored once per day.`,
+        title: "Deal split",
+        description: `${dealName(f)} is now a separate deal. The original keeps ${formatDayRange(left)}.`,
       });
-      setPendingSplitGroup(null);
+      resetForm();
     },
-    onError: onMutationError("Couldn't split the deal"),
+    onError: (err) => {
+      if (err instanceof ApiError && err.status === 409) {
+        toast({ title: "Not split", description: SPLIT_IDENTICAL, variant: "destructive" });
+      } else {
+        onMutationError("Couldn't split the deal")(err);
+      }
+    },
   });
 
   const resetForm = () => {
     setForm(emptyHHForm);
     setEditingId(null);
     setEditingGroupIds([]);
+    setSplitFrom(null);
     setShowForm(false);
     setAttempted(false);
   };
 
+  const startSplit = (group: GroupedHappyHour, days: number[]) => {
+    resetForm();
+    setForm({
+      days_of_week: [...days].sort((a, b) => a - b),
+      start_time: group.start_time.slice(0, 5),
+      end_time: group.end_time.slice(0, 5),
+      description: group.description,
+      tags: (group.tags ?? []).filter((t) => (VALID_TAGS as readonly string[]).includes(t)),
+      is_active: group.is_active,
+    });
+    setSplitFrom(group);
+    setSplitPick(null);
+  };
+
   const startEditGroup = (group: GroupedHappyHour) => {
     setShowForm(false);
+    setSplitFrom(null);
     setAttempted(false);
     setForm({
       days_of_week: group.days_of_week,
@@ -164,15 +195,27 @@ export default function HappyHourManager({ venueId, venueName }: { venueId: stri
 
   const timeError = dealTimeError(form.start_time, form.end_time);
   const formErrors = {
-    days: form.days_of_week.length === 0 ? "Pick at least one day." : null,
+    days:
+      form.days_of_week.length === 0
+        ? "Pick at least one day."
+        : splitFrom
+          ? splitDaysError(splitFrom.days_of_week, form.days_of_week)
+          : null,
     description: !form.description.trim() ? "Add a description." : null,
     time: timeError,
   };
   const formValid = !formErrors.days && !formErrors.description && !formErrors.time;
+  // A split-off deal identical to its original would be grouped straight back
+  // into it: say so instead of saving something that changes nothing on screen.
+  const splitIdentical = !!splitFrom && sameDealFields(form, splitFrom);
 
   const handleSave = () => {
     setAttempted(true);
     if (!formValid) return;
+    if (splitFrom) {
+      if (!splitIdentical) splitGroupHH.mutate({ group: splitFrom, form });
+      return;
+    }
     if (editingGroupIds.length > 1) updateGroupHH.mutate({ ...form, ids: editingGroupIds });
     else if (editingId) updateHH.mutate({ ...form, id: editingId });
     else createHH.mutate(form);
@@ -291,13 +334,18 @@ export default function HappyHourManager({ venueId, venueName }: { venueId: stri
         />
         <Label htmlFor={fid("active")}>Active (shown on the map)</Label>
       </div>
+      {splitFrom && attempted && splitIdentical && formValid && (
+        <p role="alert" className="text-sm text-amber-700 dark:text-amber-400">
+          {SPLIT_IDENTICAL}
+        </p>
+      )}
       <div className="flex justify-end gap-2">
         <Button variant="outline" size="sm" onClick={resetForm}>
           Cancel
         </Button>
         <Button size="sm" onClick={handleSave} disabled={isPending}>
           {isPending && <Loader2 className="animate-spin" aria-hidden="true" />}
-          {editingId ? "Save deal" : "Add deal"}
+          {splitFrom ? "Save as a separate deal" : editingId ? "Save deal" : "Add deal"}
         </Button>
       </div>
     </>
@@ -311,7 +359,7 @@ export default function HappyHourManager({ venueId, venueName }: { venueId: stri
         <h3 id={fid("heading")} className="text-sm font-semibold">
           Deals{!isLoading && !isError ? ` (${grouped.length})` : ""}
         </h3>
-        {!showForm && !editingId && !isError && (
+        {!showForm && !editingId && !splitFrom && !isError && (
           <Button type="button" variant="outline" size="sm" onClick={() => { resetForm(); setShowForm(true); }}>
             <Plus aria-hidden="true" /> Add a deal
           </Button>
@@ -325,6 +373,20 @@ export default function HappyHourManager({ venueId, venueName }: { venueId: stri
 
       {grouped.map((group) => {
         const summary = dealSummary(group);
+        const splitEditor = splitFrom?.ids[0] === group.ids[0] && (
+          <div className="space-y-3 rounded-md border border-primary/50 bg-muted/30 p-3">
+            <div>
+              <p className="text-sm font-medium">New deal split from {dealName(splitFrom)}</p>
+              <p className="text-xs text-muted-foreground" aria-live="polite">
+                {formErrors.days && splitFrom
+                  ? "Its days are taken out of the original deal."
+                  : `${formatDayRange(form.days_of_week.filter((d) => splitFrom.days_of_week.includes(d)))} will be taken out of the original, which keeps ${formatDayRange(daysLeftAfterSplit(splitFrom.days_of_week, form.days_of_week))}.`}{" "}
+                Change the times, description or tags for these days, then save.
+              </p>
+            </div>
+            {renderFormFields()}
+          </div>
+        );
         return editingId === group.ids[0] ? (
           <div key={group.ids[0]} className="space-y-3 rounded-md border bg-muted/30 p-3">
             <p className="text-sm font-medium">
@@ -338,62 +400,68 @@ export default function HappyHourManager({ venueId, venueName }: { venueId: stri
             {renderFormFields()}
           </div>
         ) : (
-          <div key={group.ids[0]} className="space-y-1 rounded-md border p-3 text-sm">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <DealWhen deal={group} />
-                {!group.is_active && (
-                  <Badge variant="secondary" className="ml-2 text-xs">
-                    Inactive
-                  </Badge>
-                )}
-              </div>
-              <div className="flex shrink-0 gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-9 w-9"
-                  onClick={() => startEditGroup(group)}
-                  disabled={isPending}
-                  aria-label={`Edit deal: ${summary}`}
-                >
-                  <Pencil aria-hidden="true" />
-                </Button>
-                {group.days_of_week.length > 1 && (
+          <div key={group.ids[0]} className="space-y-3">
+            <div className="space-y-1 rounded-md border p-3 text-sm">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <DealWhen deal={group} />
+                  {!group.is_active && (
+                    <Badge variant="secondary" className="ml-2 text-xs">
+                      Inactive
+                    </Badge>
+                  )}
+                </div>
+                <div className="flex shrink-0 gap-1">
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-9 w-9 text-muted-foreground"
-                    onClick={() => setPendingSplitGroup(group)}
+                    className="h-9 w-9"
+                    onClick={() => startEditGroup(group)}
                     disabled={isPending}
-                    aria-label={`Split into one deal per day: ${summary}`}
-                    title="Split into one deal per day"
+                    aria-label={`Edit deal: ${summary}`}
                   >
-                    <Scissors aria-hidden="true" />
+                    <Pencil aria-hidden="true" />
                   </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-9 w-9 text-destructive-text hover:text-destructive-text"
-                  onClick={() => setPendingDeleteGroup(group)}
-                  disabled={isPending}
-                  aria-label={`Delete deal: ${summary}`}
-                >
-                  <Trash2 aria-hidden="true" />
-                </Button>
+                  {group.days_of_week.length > 1 && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9 text-muted-foreground"
+                      onClick={() => {
+                        setPickedDays([]);
+                        setSplitPick(group);
+                      }}
+                      disabled={isPending || !!splitFrom}
+                      aria-label={`Split some days off into a separate deal: ${summary}`}
+                      title="Split some days off into a separate deal"
+                    >
+                      <Scissors aria-hidden="true" />
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 text-destructive-text hover:text-destructive-text"
+                    onClick={() => setPendingDeleteGroup(group)}
+                    disabled={isPending}
+                    aria-label={`Delete deal: ${summary}`}
+                  >
+                    <Trash2 aria-hidden="true" />
+                  </Button>
+                </div>
               </div>
+              <p className="text-muted-foreground">{group.description}</p>
+              {group.tags && group.tags.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {group.tags.map((tag) => (
+                    <Badge key={tag} variant="outline" className="text-xs capitalize">
+                      {tag}
+                    </Badge>
+                  ))}
+                </div>
+              )}
             </div>
-            <p className="text-muted-foreground">{group.description}</p>
-            {group.tags && group.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {group.tags.map((tag) => (
-                  <Badge key={tag} variant="outline" className="text-xs capitalize">
-                    {tag}
-                  </Badge>
-                ))}
-              </div>
-            )}
+            {splitEditor}
           </div>
         );
       })}
@@ -436,39 +504,60 @@ export default function HappyHourManager({ venueId, venueName }: { venueId: stri
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog
-        open={!!pendingSplitGroup}
-        onOpenChange={(open) => !open && !splitGroupHH.isPending && setPendingSplitGroup(null)}
-      >
+      <AlertDialog open={!!splitPick} onOpenChange={(open) => !open && setSplitPick(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>
-              Split into {pendingSplitGroup?.days_of_week.length ?? 0} single-day records?
-            </AlertDialogTitle>
+            <AlertDialogTitle>Which days should become a separate deal?</AlertDialogTitle>
             <AlertDialogDescription>
-              {pendingSplitGroup && (
+              {splitPick && (
                 <>
-                  {dealName(pendingSplitGroup)} at <strong>{venueName}</strong> will be stored as a separate record
-                  for each of{" "}
-                  {sortDaysInWeekOrder(pendingSplitGroup.days_of_week)
-                    .map((d) => DAYS_SHORT[d])
-                    .join(", ")}
-                  , with the same times, description and tags. Records that still match are listed together here.
+                  Pick days to take out of {dealName(splitPick)}. Next you can change their times, description or
+                  tags; nothing is saved until you do.
                 </>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {splitPick && (
+            <div role="group" aria-labelledby={fid("split-days")} className="space-y-2">
+              <p id={fid("split-days")} className="sr-only">
+                Days to split off
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {WEEK_DAYS.filter((d) => splitPick.days_of_week.includes(d.value)).map((d) => (
+                  <Chip
+                    key={d.value}
+                    size="sm"
+                    aria-label={d.long}
+                    selected={pickedDays.includes(d.value)}
+                    onClick={() =>
+                      setPickedDays((p) => (p.includes(d.value) ? p.filter((x) => x !== d.value) : [...p, d.value]))
+                    }
+                  >
+                    {d.short}
+                  </Chip>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground" aria-live="polite">
+                {pickedDays.length === 0
+                  ? "Pick at least one day."
+                  : pickedDays.length === splitPick.days_of_week.length
+                    ? "Leave at least one day in the original deal. To change every day, edit the deal instead."
+                    : `${formatDayRange(pickedDays)} becomes a separate deal; the original keeps ${formatDayRange(
+                        daysLeftAfterSplit(splitPick.days_of_week, pickedDays),
+                      )}.`}
+              </p>
+            </div>
+          )}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={splitGroupHH.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              disabled={splitGroupHH.isPending}
+              disabled={!splitPick || !!splitDaysError(splitPick.days_of_week, pickedDays)}
               onClick={(e) => {
                 e.preventDefault();
-                if (pendingSplitGroup) splitGroupHH.mutate(pendingSplitGroup);
+                if (splitPick && !splitDaysError(splitPick.days_of_week, pickedDays)) startSplit(splitPick, pickedDays);
               }}
             >
-              {splitGroupHH.isPending && <Loader2 className="animate-spin" aria-hidden="true" />}
-              Split
+              {pickedDays.length > 0 ? `Split off ${plural(pickedDays.length, "day")}` : "Split off days"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

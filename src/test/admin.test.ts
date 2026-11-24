@@ -4,6 +4,9 @@ import {
   approveBlockers,
   checkCoordInputs,
   cityUnrecognised,
+  daysLeftAfterSplit,
+  sameDealFields,
+  splitDaysError,
   isConfirmedPin,
   LOCATION_REQUIRED,
   lookupPinSource,
@@ -217,5 +220,24 @@ describe("venues table", () => {
     expect(venueCountLabel(3, 62)).toBe("3 of 62 venues");
     expect(venueCountLabel(62, 62)).toBe("62 venues");
     expect(venueCountLabel(1, 1)).toBe("1 venue");
+  });
+});
+
+describe("splitting a deal", () => {
+  const orig = { start_time: "17:00:00", end_time: "19:00:00", description: "$8 pints", tags: ["wine", "beer"], is_active: true };
+
+  it("treats a deal with the same times, description, tags and state as identical, whatever its days", () => {
+    expect(sameDealFields(orig, { ...orig, start_time: "17:00", end_time: "19:00", description: " $8 pints ", tags: ["beer", "wine"] })).toBe(true);
+    expect(sameDealFields(orig, { ...orig, end_time: "20:00" })).toBe(false);
+    expect(sameDealFields(orig, { ...orig, tags: ["beer"] })).toBe(false);
+    expect(sameDealFields(orig, { ...orig, is_active: false })).toBe(false);
+  });
+
+  it("needs at least one of the original's days, and leaves it at least one", () => {
+    expect(splitDaysError([1, 2, 3, 4, 5], [5])).toBeNull();
+    expect(splitDaysError([1, 2, 3, 4, 5], [5, 6])).toBeNull();
+    expect(splitDaysError([1, 2, 3, 4, 5], [0])).toBe("Pick at least one of the original deal's days (Mon–Fri).");
+    expect(splitDaysError([1, 2], [1, 2])).toMatch(/^Leave at least one day/);
+    expect(daysLeftAfterSplit([1, 2, 3, 4, 5], [4, 5])).toEqual([1, 2, 3]);
   });
 });
