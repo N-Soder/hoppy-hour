@@ -1,6 +1,6 @@
 import { useId, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, ArrowUpDown, ExternalLink, Loader2, MapPin, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ExternalLink, Globe, Loader2, MapPin, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Venue } from "@/lib/api-types";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,7 @@ import {
 import HappyHourManager from "./HappyHourManager";
 import { AdminErrorState, AdminLoading } from "./AdminStates";
 import { StatusSwitch } from "./StatusSwitch";
+import { TimeZonePicker } from "./TimeZonePicker";
 
 type VenueForm = {
   name: string;
@@ -34,9 +35,11 @@ type VenueForm = {
   country: string;
   lat: number | null;
   lng: number | null;
+  /** IANA zone the deal times are in; only edited for an existing venue. */
+  timezone: string | null;
 };
 
-const emptyForm: VenueForm = { name: "", address: "", country: "", lat: null, lng: null };
+const emptyForm: VenueForm = { name: "", address: "", country: "", lat: null, lng: null, timezone: null };
 const UNDO_MS = 10_000;
 
 function SortButton({
@@ -80,6 +83,11 @@ export default function VenueManager() {
   const [formStart, setFormStart] = useState<VenueForm>(emptyForm);
   const [dealsDirty, setDealsDirty] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // Whether the database has venues.timezone yet (migration 0005); the time
+  // zone field is hidden until it does.
+  const [timezoneSupported, setTimezoneSupported] = useState(false);
+  const [isDetectingZone, setIsDetectingZone] = useState(false);
+  const [zoneNote, setZoneNote] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -88,7 +96,11 @@ export default function VenueManager() {
 
   const { data: venues = [], isLoading, isError, error, refetch, isRefetching } = useQuery({
     queryKey: ["admin_venues"],
-    queryFn: async () => (await api.get<{ venues: Venue[] }>("/api/admin/venues")).venues,
+    queryFn: async () => {
+      const res = await api.get<{ venues: Venue[]; timezone_supported?: boolean }>("/api/admin/venues");
+      setTimezoneSupported(res.timezone_supported === true);
+      return res.venues;
+    },
   });
 
   // Rows keep their place while the admin works on them (switching a venue
@@ -120,12 +132,15 @@ export default function VenueManager() {
   const invalidateVenues = () => queryClient.invalidateQueries({ queryKey: ["admin_venues"] });
 
   const updateVenue = useMutation({
-    mutationFn: async ({ id, lat, lng, ...f }: VenueForm & { id: string }) => {
+    mutationFn: async ({ id, lat, lng, timezone, sendTimezone, ...f }: VenueForm & { id: string; sendTimezone: boolean }) => {
       await api.put(`/api/admin/venues/${id}`, {
         name: f.name.trim(),
         address: f.address.trim(),
         country: f.country || null,
         ...(lat != null && lng != null ? { lat, lng } : {}),
+        // Only a zone the admin changed is sent: otherwise a new pin lets the
+        // server derive the zone again from the new coordinates.
+        ...(sendTimezone ? { timezone } : {}),
       });
     },
     onSuccess: (_r, v) => {
@@ -211,12 +226,20 @@ export default function VenueManager() {
   });
 
   const openEdit = (venue: Venue) => {
-    const start = { name: venue.name, address: venue.address, country: venue.country ?? "", lat: null, lng: null };
+    const start: VenueForm = {
+      name: venue.name,
+      address: venue.address,
+      country: venue.country ?? "",
+      lat: null,
+      lng: null,
+      timezone: venue.timezone ?? null,
+    };
     setEditVenue(venue);
     setFormData(start);
     setFormStart(start);
     setDealsDirty(false);
     setGeocodeNote(null);
+    setZoneNote(null);
     setDialogOpen(true);
   };
 
@@ -226,7 +249,31 @@ export default function VenueManager() {
     setFormStart(emptyForm);
     setDealsDirty(false);
     setGeocodeNote(null);
+    setZoneNote(null);
     setDialogOpen(true);
+  };
+
+  // "Detect from location": the zone the server derives for the pin (the new
+  // one if the address was looked up again, else the venue's current one).
+  const handleDetectZone = async () => {
+    const lat = formData.lat ?? editVenue?.lat ?? null;
+    const lng = formData.lng ?? editVenue?.lng ?? null;
+    if (lat == null || lng == null) return;
+    setIsDetectingZone(true);
+    setZoneNote(null);
+    try {
+      const { timezone } = await api.get<{ timezone: string }>(`/api/admin/timezone?lat=${lat}&lng=${lng}`);
+      setFormData((f) => ({ ...f, timezone }));
+      setZoneNote(
+        timezone === formData.timezone
+          ? "The location gives the same time zone."
+          : `Detected ${timezone.replace(/_/g, " ")}. Save to keep it.`,
+      );
+    } catch (err) {
+      setZoneNote(`Couldn't detect the time zone: ${readableError(err)}`);
+    } finally {
+      setIsDetectingZone(false);
+    }
   };
 
   const closeDialog = () => {
@@ -277,7 +324,13 @@ export default function VenueManager() {
 
   const handleSave = () => {
     if (saveBlockers.length) return;
-    if (editVenue) updateVenue.mutate({ id: editVenue.id, ...formData });
+    if (editVenue) {
+      updateVenue.mutate({
+        id: editVenue.id,
+        ...formData,
+        sendTimezone: timezoneSupported && formData.timezone !== formStart.timezone,
+      });
+    }
     else createVenue.mutate(formData);
   };
 
@@ -512,6 +565,48 @@ export default function VenueManager() {
                 {geocodeNote && <p className="mt-1 text-amber-700 dark:text-amber-400">{geocodeNote}</p>}
               </div>
             </div>
+            {editVenue && timezoneSupported && (
+              <div className="space-y-2">
+                <Label htmlFor={fid("timezone")}>Time zone</Label>
+                <div className="flex gap-2">
+                  <div className="min-w-0 flex-1">
+                    <TimeZonePicker
+                      id={fid("timezone")}
+                      value={formData.timezone}
+                      onChange={(zone) => {
+                        setZoneNote(null);
+                        setFormData((f) => ({ ...f, timezone: zone }));
+                      }}
+                      aria-describedby={fid("timezone-help")}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleDetectZone}
+                    disabled={
+                      isDetectingZone ||
+                      (formData.lat ?? editVenue.lat) == null ||
+                      (formData.lng ?? editVenue.lng) == null
+                    }
+                    className="shrink-0"
+                  >
+                    {isDetectingZone ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Globe aria-hidden="true" />}
+                    Detect from location
+                  </Button>
+                </div>
+                <div id={fid("timezone-help")} aria-live="polite" className="text-xs text-muted-foreground">
+                  {zoneNote ? (
+                    <p>{zoneNote}</p>
+                  ) : (
+                    <p>
+                      Deal times are read in this zone. It is set from the pin automatically; near a border the
+                      lookup can pick the neighbouring zone, so correct it here if needed.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="space-y-2 border-t pt-3">

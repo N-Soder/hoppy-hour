@@ -109,6 +109,24 @@ export function instantOfWallClock(
   return asUtc - offsetMinutes(asUtc - DAY, zone) * 60_000;
 }
 
+/**
+ * The IANA zones this browser knows, sorted, for a picker. Always includes
+ * `extra` (the venue's current zone, which may be an alias the list omits)
+ * and UTC. Empty-safe on engines without Intl.supportedValuesOf.
+ */
+export function supportedTimeZones(extra?: string | null): string[] {
+  let zones: string[] = [];
+  try {
+    const intl = Intl as unknown as { supportedValuesOf?: (key: string) => string[] };
+    zones = intl.supportedValuesOf?.("timeZone") ?? [];
+  } catch {
+    zones = [];
+  }
+  const all = new Set([...zones, "UTC"]);
+  if (extra && isValidTimeZone(extra)) all.add(extra);
+  return [...all].sort();
+}
+
 /** "HH:MM" for a wall clock. */
 export function hhmm(w: Pick<WallClock, "hour" | "minute">): string {
   return `${String(w.hour).padStart(2, "0")}:${String(w.minute).padStart(2, "0")}`;

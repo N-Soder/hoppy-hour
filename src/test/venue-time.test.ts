@@ -7,6 +7,7 @@ import {
   isValidTimeZone,
   offsetMinutes,
   sameClock,
+  supportedTimeZones,
   wallClockAt,
   zoneLabel,
   zoneOrFallback,
@@ -96,6 +97,15 @@ describe("zone conversion", () => {
     expect(zoneLabel("Etc/UTC")).toBe("UTC");
     expect(zoneLabel("Etc/GMT-8")).toBe("UTC+8");
     expect(zoneLabel("Etc/GMT+5")).toBe("UTC-5");
+  });
+
+  it("lists the browser's zones for the picker, sorted, with UTC and the current value", () => {
+    const zones = supportedTimeZones("Asia/Calcutta");
+    expect(zones).toContain(PERTH);
+    expect(zones).toContain("UTC");
+    expect(zones).toContain("Asia/Calcutta");
+    expect([...zones].sort()).toEqual(zones);
+    expect(supportedTimeZones("Nowhere/Land")).not.toContain("Nowhere/Land");
   });
 
   it("validates zones and falls back for unknown ones", () => {

@@ -10,6 +10,7 @@ import { onRequestGet as publicVenue } from "../../functions/api/venues/[id]";
 import { onRequestGet as adminVenues, onRequestPost as createVenue } from "../../functions/api/admin/venues/index";
 import { onRequestPut as updateVenue } from "../../functions/api/admin/venues/[id]";
 import { onRequestPost as approve } from "../../functions/api/admin/submissions/[id]/approve";
+import { onRequestGet as detectZone } from "../../functions/api/admin/timezone";
 
 const PERTH = { lat: -31.95, lng: 115.86 };
 const SYDNEY = { lat: -33.87, lng: 151.21 };
@@ -187,6 +188,23 @@ describe("approve", () => {
     expect((await call(approve, { params: { id: "b" }, body: { venue_id: "fixed", happy_hours: [deal] } })).status).toBe(200);
     expect(zoneOf("empty")).toBe("Australia/Perth");
     expect(zoneOf("fixed")).toBe("Etc/GMT-8");
+  });
+});
+
+describe("admin time zone helpers", () => {
+  it("detects the zone for coordinates", async () => {
+    const res = await call(detectZone, { method: "GET", url: `http://localhost/api/admin/timezone?lat=${SYDNEY.lat}&lng=${SYDNEY.lng}` });
+    expect(await res.json()).toEqual({ timezone: "Australia/Sydney" });
+    expect((await call(detectZone, { method: "GET", url: "http://localhost/api/admin/timezone?lat=1" })).status).toBe(400);
+    expect((await call(detectZone, { method: "GET", url: "http://localhost/api/admin/timezone?lat=95&lng=0" })).status).toBe(400);
+  });
+
+  it("tells the editor whether the timezone column exists", async () => {
+    const before = await call(adminVenues, { method: "GET" });
+    expect(((await before.json()) as { timezone_supported: boolean }).timezone_supported).toBe(true);
+    d1.exec(`ALTER TABLE venues DROP COLUMN timezone`);
+    const after = await call(adminVenues, { method: "GET" });
+    expect(((await after.json()) as { timezone_supported: boolean }).timezone_supported).toBe(false);
   });
 });
 
