@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
  */
 export default function SiteHeader({ backTo }: { backTo?: string }) {
   return (
-    <header className="flex items-center gap-3 border-b border-border bg-card px-4 py-3 md:px-6">
+    <header className="flex items-center gap-3 border-b border-border bg-card px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))] md:px-6">
       {backTo && (
         <Button variant="ghost" size="icon" asChild>
           <Link to={backTo} aria-label="Back to map">
