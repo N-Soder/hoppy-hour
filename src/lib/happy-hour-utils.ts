@@ -154,3 +154,10 @@ export function groupByDaySet(
       deals: deals.slice().sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time)),
     }));
 }
+
+/** The deals that run on `day` (0=Sun…6=Sat), earliest start first. */
+export function dealsOnDay(groups: GroupedHappyHour[], day: number): GroupedHappyHour[] {
+  return groups
+    .filter((g) => g.days_of_week.includes(day))
+    .sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time));
+}
