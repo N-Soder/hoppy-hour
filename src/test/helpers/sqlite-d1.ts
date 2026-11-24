@@ -3,7 +3,12 @@
 // constraints, ?N bindings, batches) without wrangler. Test-only.
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type * as NodeSqlite from "node:sqlite";
+
+// Loaded at runtime rather than imported: under vite 8 the jsdom (client)
+// environment refuses to resolve the prefix-only "node:sqlite" builtin.
+const { DatabaseSync } = process.getBuiltinModule("node:sqlite") as typeof NodeSqlite;
+type DatabaseSync = NodeSqlite.DatabaseSync;
 
 type Value = string | number | null;
 
