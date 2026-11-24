@@ -31,10 +31,15 @@ import { useToast } from "@/hooks/use-toast";
 import MapView from "@/components/MapView";
 import { MapMessage } from "@/components/MapMessage";
 import FiltersPanel from "@/components/FiltersPanel";
-import VenueList, { VenueListEmpty, VenueListError, VenueListSkeleton } from "@/components/VenueList";
+import VenueList, {
+  VenueDetailSkeleton,
+  VenueListEmpty,
+  VenueListError,
+  VenueListSkeleton,
+} from "@/components/VenueList";
 import VenueDetail, { ScrollCue } from "@/components/VenueDetail";
 import { venueStatus } from "@/lib/venue-status";
-import VenueSheet, { type SheetMode } from "@/components/VenueSheet";
+import VenueSheet, { VenueSheetPlaceholder, type SheetMode } from "@/components/VenueSheet";
 import { Button } from "@/components/ui/button";
 import OptionsMenu from "@/components/OptionsMenu";
 import { DEFAULT_LOCATION_NAME } from "@/lib/constants";
@@ -757,10 +762,7 @@ export default function Index() {
                       Couldn't load this venue. Check your connection and try again.
                     </p>
                   ) : (
-                    <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                      Loading venue…
-                    </div>
+                    <VenueDetailSkeleton />
                   )}
                   <ScrollCue scrollRef={panelScrollRef} />
                 </div>
@@ -842,7 +844,11 @@ export default function Index() {
         )}
       </div>
 
-      {/* Phone venue detail: one sheet, from the list or the map. */}
+      {/* Phone venue detail: one sheet, from the list or the map. A shared
+          link shows the sheet's skeleton until the venue arrives. */}
+      {isMobile && venueOpen && !(detailVenue && detailStatus && detailClock) && (
+        <VenueSheetPlaceholder failed={linkedQuery.isError} onClose={closeVenue} />
+      )}
       {isMobile && venueOpen && detailVenue && detailStatus && detailClock && (
         <VenueSheet
           venue={detailVenue}
