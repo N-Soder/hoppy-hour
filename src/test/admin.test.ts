@@ -9,6 +9,7 @@ import {
   endsNextDay,
   filterVenues,
   initialPin,
+  locationLabel,
   readableError,
   sortVenues,
   splitCoordPair,
@@ -79,6 +80,18 @@ describe("coordinate inputs", () => {
   it("splits a pasted Google Maps pair", () => {
     expect(splitCoordPair("-31.95004, 115.86056")).toEqual({ lat: "-31.95004", lng: "115.86056" });
     expect(splitCoordPair("-31.95")).toBeNull();
+  });
+});
+
+describe("locationLabel", () => {
+  it("joins street, city and country without repeating an address that already names them", () => {
+    expect(locationLabel({ venue_address: "12 Example St", city: "Perth", country: "AU" })).toBe(
+      "12 Example St, Perth, Australia",
+    );
+    expect(locationLabel({ venue_address: "Smalltown, Australia", city: "Smalltown", country: "AU" })).toBe(
+      "Smalltown, Australia",
+    );
+    expect(locationLabel({ venue_address: "", city: null, country: null })).toBe("");
   });
 });
 

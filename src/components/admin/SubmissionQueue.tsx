@@ -163,9 +163,6 @@ export default function SubmissionQueue() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <SubmissionDealList deals={dealsOf(sub)} />
-                  {sub.status === "approved" && sub.venue_id && (
-                    <p className="text-xs text-muted-foreground">Deals were added to an existing venue.</p>
-                  )}
                   {filter === "pending" && (
                     <div className="flex flex-wrap gap-2 pt-1">
                       <Button

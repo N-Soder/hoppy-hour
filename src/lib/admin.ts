@@ -27,7 +27,14 @@ export function dealsOf(sub: Submission): SubmissionDeal[] {
 /** Human-readable location line for a submission (street + city + country). */
 export function locationLabel(sub: Pick<Submission, "venue_address" | "city" | "country">): string {
   const country = countryByCode(sub.country);
-  return [sub.venue_address, sub.city, country?.name].filter(Boolean).join(", ");
+  // Approval records the venue's address, which may already be "City,
+  // Country" (the fallback when no street was given): don't repeat parts.
+  const parts: string[] = [];
+  for (const p of [sub.venue_address, sub.city, country?.name]) {
+    const t = p?.trim();
+    if (t && !parts.join(", ").toLowerCase().includes(t.toLowerCase())) parts.push(t);
+  }
+  return parts.join(", ");
 }
 
 /** "24 Nov 2026" in the viewer's locale. */
