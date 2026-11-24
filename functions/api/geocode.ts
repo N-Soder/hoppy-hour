@@ -16,7 +16,10 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     return error("Too many requests", 429);
   }
 
-  const token = env.MAPBOX_ACCESS_TOKEN;
+  // Prefer the server-only geocoding token. Fall back to the public map token,
+  // which needs the Referer workaround below to pass its URL restriction.
+  const serverToken = env.MAPBOX_GEOCODE_TOKEN;
+  const token = serverToken || env.MAPBOX_ACCESS_TOKEN;
   if (!token) return error("Token not configured", 500);
 
   const params = new URL(request.url).searchParams;
@@ -60,8 +63,9 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   // restricted token accepts the request (the origin is already an allowed URL,
   // or the map wouldn't load). GEOCODE_REFERER can override it if the token's
   // allowed URLs use a different host (e.g. a custom domain).
+  // Not needed (and not sent) with a dedicated MAPBOX_GEOCODE_TOKEN.
   const referer = env.GEOCODE_REFERER || new URL(request.url).origin;
-  const mapboxInit = { headers: { Referer: referer } };
+  const mapboxInit = serverToken ? {} : { headers: { Referer: referer } };
 
   let res: Response;
   let data: { message?: string; features?: unknown[] };
@@ -71,13 +75,15 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       mapboxInit,
     );
     data = await res.json<{ message?: string; features?: unknown[] }>();
-  } catch {
+  } catch (err) {
+    console.error("geocode: Mapbox unreachable", err);
     return error("Geocoding service unavailable", 502);
   }
 
   // Surface Mapbox errors rather than an empty result the client can't tell
   // apart from "no matches".
   if (!res.ok || data.message) {
+    console.warn("geocode: Mapbox error", res.status, data.message);
     return json(
       { error: data.message ?? "Mapbox API error", mapbox: data },
       res.ok ? 200 : res.status,

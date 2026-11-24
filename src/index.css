@@ -8,7 +8,13 @@ All colors MUST be HSL.
 
 @layer base {
   /* "Copper Standard" palette — warm cream ground, deep copper primary.
-     Light primary #B35C0C, dark primary #EB9333. */
+     Light primary #9D520B, dark primary #EB9333.
+
+     Contrast rules (WCAG 2.2 AA), checked for every text/background pair the
+     tokens are used in: text ≥ 4.5:1, input borders and other control
+     outlines ≥ 3:1. --border stays a soft divider; anything a user has to see
+     to operate (inputs, outline buttons, chips) uses --input. Text in an
+     error colour uses --destructive-text, never --destructive (a fill). */
   :root {
     --background: 40 45% 95%;
     --foreground: 33 34% 13%;
@@ -19,35 +25,38 @@ All colors MUST be HSL.
     --popover: 0 0% 100%;
     --popover-foreground: 33 34% 13%;
 
-    --primary: 29 87% 37%;
+    --primary: 29 87% 33%;
     --primary-foreground: 0 0% 100%;
+    /* Hover fill for primary buttons: darker, so white text gains contrast. */
+    --primary-hover: 29 87% 27%;
 
     --secondary: 40 35% 91%;
     --secondary-foreground: 33 30% 18%;
 
     --muted: 40 32% 90%;
-    --muted-foreground: 35 14% 46%;
+    --muted-foreground: 35 16% 36%;
 
     --accent: 29 65% 92%;
-    --accent-foreground: 29 87% 28%;
+    --accent-foreground: 29 87% 26%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 72% 42%;
+    --destructive-foreground: 0 0% 100%;
+    --destructive-text: 0 72% 40%;
 
     --border: 39 34% 85%;
-    --input: 39 34% 85%;
-    --ring: 29 87% 37%;
+    --input: 35 14% 52%;
+    --ring: 29 87% 33%;
 
     --radius: 0.75rem;
 
     --sidebar-background: 40 40% 94%;
     --sidebar-foreground: 33 15% 30%;
-    --sidebar-primary: 29 87% 37%;
+    --sidebar-primary: 29 87% 33%;
     --sidebar-primary-foreground: 0 0% 100%;
     --sidebar-accent: 40 35% 91%;
     --sidebar-accent-foreground: 33 30% 18%;
     --sidebar-border: 39 34% 85%;
-    --sidebar-ring: 29 87% 37%;
+    --sidebar-ring: 29 87% 33%;
 
     --happy: 142 60% 40%;
     --happy-foreground: 0 0% 100%;
@@ -65,21 +74,24 @@ All colors MUST be HSL.
 
     --primary: 31 82% 56%;
     --primary-foreground: 24 76% 8%;
+    /* Hover fill for primary buttons: lighter, so the dark text gains contrast. */
+    --primary-hover: 31 82% 64%;
 
     --secondary: 25 20% 16%;
     --secondary-foreground: 34 30% 85%;
 
     --muted: 28 22% 14%;
-    --muted-foreground: 33 14% 56%;
+    --muted-foreground: 33 16% 64%;
 
     --accent: 29 45% 20%;
     --accent-foreground: 31 82% 70%;
 
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --destructive-text: 0 90% 74%;
 
     --border: 30 24% 16%;
-    --input: 30 24% 16%;
+    --input: 30 12% 42%;
     --ring: 31 82% 56%;
 
     --sidebar-background: 20 18% 9%;
@@ -106,10 +118,114 @@ All colors MUST be HSL.
   }
 }
 
+/* ── Touch ──────────────────────────────────────────────────────────────────
+   .touch-target guarantees a 44×44px hit area on coarse pointers without
+   changing the visible size: an invisible ::after grows the tappable box
+   around the control. It is built into the Button primitive and Chip; use it
+   on any other small tappable element. The element must not clip overflow. */
+@layer utilities {
+  .touch-target:not(.absolute):not(.fixed):not(.sticky) {
+    position: relative;
+  }
+  @media (pointer: coarse) {
+    .touch-target::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 100%;
+      height: 100%;
+      min-width: 44px;
+      min-height: 44px;
+      transform: translate(-50%, -50%);
+    }
+  }
+}
+
+/* iOS Safari zooms the page when a focused field's text is under 16px. The
+   primitives already use text-base below md; this catches any override
+   (text-sm and friends) on phones and tablets. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  textarea,
+  select {
+    font-size: max(16px, 1em) !important;
+  }
+}
+
+/* ── Motion ─────────────────────────────────────────────────────────────────
+   Honour the OS "reduce motion" setting everywhere: pulsing live dots,
+   skeleton shimmer, the header slide, smooth scrolling and anything injected
+   at runtime (the map's user-location pulse). JS-driven motion (map flyTo,
+   scrollIntoView) checks prefersReducedMotion() in src/lib/motion.ts. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* Touch devices zoom by pinching and rotate with two fingers, so the
    zoom/compass stack only adds clutter along the map's top edge. */
 @media (pointer: coarse) {
   .mapboxgl-ctrl-top-right {
     display: none;
   }
+}
+
+/* ── Map markers ────────────────────────────────────────────────────────────
+   Venue pins and cluster bubbles are <button>s (see MapView). A visible
+   focus ring, and a 44px hit area on touch however small the pin is drawn. */
+.venue-pin,
+.venue-cluster {
+  cursor: pointer;
+}
+.venue-pin:focus-visible,
+.venue-cluster:focus-visible {
+  outline: 3px solid hsl(var(--ring));
+  outline-offset: 2px;
+  z-index: 4 !important;
+}
+.venue-pin::after,
+.venue-cluster::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  height: 100%;
+  transform: translate(-50%, -50%);
+}
+@media (pointer: coarse) {
+  .venue-pin::after,
+  .venue-cluster::after {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+.venue-cluster-pip {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9999px;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* Horizontal chip rows on phones scroll instead of wrapping; hide the bar. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }

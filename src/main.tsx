@@ -1,3 +1,4 @@
+import "./lib/zod-config";
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";

@@ -3,9 +3,8 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { api, ApiError } from "@/lib/api";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
-  ArrowLeft,
   Clock,
   Send,
   CheckCircle,
@@ -19,9 +18,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Chip } from "@/components/ui/chip";
+import SiteHeader from "@/components/SiteHeader";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import {
   Form,
   FormControl,
@@ -32,13 +32,15 @@ import {
 } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { inferTagsFromDescription } from "@/lib/auto-tag";
-import { VALID_TAGS } from "@/lib/constants";
+import { VALID_TAGS, WEEK_DAYS } from "@/lib/constants";
+import { formatTimeRange } from "@/lib/format";
+import { scrollBehavior } from "@/lib/motion";
 import { MAX_DEALS_PER_SUBMISSION } from "@/lib/api-types";
 import {
   DEAL_PRESETS,
+  migrateLegacyAllDay,
   TIME_OPTIONS,
   bumpedEnd,
-  formatMinutes,
   minutesToClock,
   CUSTOM_DEFAULT_START,
   CUSTOM_DEFAULT_END,
@@ -49,6 +51,7 @@ import { CitySearch } from "@/components/submit/CitySearch";
 import { useLocationPrefill } from "@/hooks/use-location-prefill";
 import { computeLocationPrefill } from "@/lib/location-prefill";
 import type { CityResult } from "@/lib/city-search";
+import { parseVenuePrefill, prefillCity, type VenuePrefill } from "@/lib/venue-prefill";
 import {
   DRAFT_SAVE_DEBOUNCE_MS,
   DRAFT_VERSION,
@@ -61,17 +64,8 @@ import {
   type SubmissionDraft,
 } from "@/lib/submission-draft";
 
-// Day chips render Monday-first (week starts Monday). `value` is the stored
+// Day chips render Monday-first (shared WEEK_DAYS). `value` is the stored
 // day index (0=Sun…6=Sat) — the display order changes, the data model does not.
-const DAY_ORDER = [
-  { value: 1, label: "Mon" },
-  { value: 2, label: "Tue" },
-  { value: 3, label: "Wed" },
-  { value: 4, label: "Thu" },
-  { value: 5, label: "Fri" },
-  { value: 6, label: "Sat" },
-  { value: 0, label: "Sun" },
-];
 const WEEKDAYS = [1, 2, 3, 4, 5];
 const EVERY_DAY = [0, 1, 2, 3, 4, 5, 6];
 
@@ -156,17 +150,23 @@ const DEAL_FIELDS = ["days_of_week", "start_time", "end_time", "description", "t
 function daysLabel(days: number[]): string {
   if (days.length === 7) return "Every day";
   if (days.length === 5 && WEEKDAYS.every((w) => days.includes(w))) return "Weekdays";
-  return DAY_ORDER.filter((d) => days.includes(d.value))
-    .map((d) => d.label)
+  return WEEK_DAYS.filter((d) => days.includes(d.value))
+    .map((d) => d.short)
     .join(", ");
 }
 
-/** Time range label for a collapsed deal row, e.g. "4:00 PM – 6:00 PM". */
+/** Time range label for a collapsed deal row, e.g. "4–6 pm". */
 function timeRangeLabel(deal: DealDraft): string {
   if (deal.startMin != null && deal.endMin != null) {
-    return `${formatMinutes(deal.startMin)} – ${formatMinutes(deal.endMin)}`;
+    return formatTimeRange(deal.startMin, deal.endMin);
   }
-  return `${deal.start_time} – ${deal.end_time}`;
+  if (deal.start_time && deal.end_time) return formatTimeRange(deal.start_time, deal.end_time);
+  return "No hours yet";
+}
+
+/** Same members, any order. */
+function sameDays(a: number[], b: number[]): boolean {
+  return a.length === b.length && b.every((d) => a.includes(d));
 }
 
 // Fields shown in the "please fix these" error summary near the submit button,
@@ -189,7 +189,7 @@ const ERROR_SUMMARY_FIELDS: { name: keyof SubmissionForm; anchor: string }[] = [
 function focusField(anchor: string) {
   const el = document.getElementById(anchor);
   if (!el) return;
-  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  el.scrollIntoView({ behavior: scrollBehavior(), block: "center" });
   const focusable = el.querySelector<HTMLElement>(
     "input:not([type='hidden']), select, textarea, button, [tabindex]:not([tabindex='-1'])"
   );
@@ -203,14 +203,26 @@ export default function Submit() {
   // to the toast), so the reason is visible without relying on the transient toast.
   const [serverError, setServerError] = useState<string | null>(null);
   const { toast } = useToast();
+  const navigate = useNavigate();
+
+  // "Suggest an edit" from a venue opens this page with the venue's details
+  // in the URL (see lib/venue-prefill). Read once, on first render: it fills
+  // the form, counts as the user's location choice, and is then dropped from
+  // the address so a reload doesn't apply it on top of what they've typed.
+  const [venuePrefill] = useState<VenuePrefill | null>(() =>
+    parseVenuePrefill(new URLSearchParams(window.location.search)),
+  );
+  useEffect(() => {
+    if (venuePrefill) navigate({ search: "" }, { replace: true });
+  }, [venuePrefill, navigate]);
 
   const form = useForm<SubmissionForm>({
     resolver: zodResolver(submissionSchema),
     defaultValues: {
-      venue_name: "",
-      country: "",
-      city: "",
-      venue_address: "",
+      venue_name: venuePrefill?.venue_name ?? "",
+      country: venuePrefill?.country ?? "",
+      city: venuePrefill?.city ?? "",
+      venue_address: venuePrefill?.venue_address ?? "",
       days_of_week: [],
       start_time: "",
       end_time: "",
@@ -223,14 +235,16 @@ export default function Submit() {
   // Location picker. `selectedCity` holds the chosen city's coordinates (the
   // map pin source); the form's `city`/`country` fields mirror it for
   // validation + display. Prefill fills these passively (see below).
-  const [selectedCity, setSelectedCity] = useState<CityResult | null>(null);
+  const [selectedCity, setSelectedCity] = useState<CityResult | null>(() =>
+    venuePrefill ? prefillCity(venuePrefill) : null,
+  );
   // Once the user picks a country or city themselves, the passive GPS/IP prefill
   // must stop. On mobile, geolocation is often already granted and its GPS fix
   // resolves a second or two AFTER load — late enough to land after the user has
   // already chosen (e.g.) Canada and clobber both city and country back to their
   // physical location (AU). `dirtyFields` alone doesn't guard this (the pickers
   // set values without marking them dirty), so track explicit interaction here.
-  const [locationTouched, setLocationTouched] = useState(false);
+  const [locationTouched, setLocationTouched] = useState(() => venuePrefill !== null);
   const prefill = useLocationPrefill();
 
   const handleCityChange = (city: CityResult) => {
@@ -239,6 +253,16 @@ export default function Submit() {
     form.setValue("city", city.city, { shouldValidate: true });
     if (city.countryCode) form.setValue("country", city.countryCode, { shouldValidate: true });
   };
+
+  // The lookup found nothing (or was unreachable) and the user chose to use
+  // their own text. It goes in without coordinates; the moderator places the
+  // venue on the map during review.
+  const handleCityTyped = (text: string) => {
+    setLocationTouched(true);
+    setSelectedCity(null);
+    form.setValue("city", text, { shouldValidate: true });
+  };
+  const cityValue = form.watch("city");
 
   const handleCountryChange = (code: string) => {
     setLocationTouched(true);
@@ -327,7 +351,8 @@ export default function Submit() {
     (form.getValues("days_of_week") ?? []).length === 0 &&
     !form.getValues("description").trim();
 
-  const loadDealIntoEditor = (d: DealDraft) => {
+  const loadDealIntoEditor = (raw: DealDraft) => {
+    const d = migrateLegacyAllDay(raw);
     form.setValue("days_of_week", d.days_of_week);
     form.setValue("start_time", d.start_time);
     form.setValue("end_time", d.end_time);
@@ -408,7 +433,7 @@ export default function Submit() {
     // A restored location is an explicit choice — stop the passive GPS/IP
     // prefill from overwriting it a moment later.
     setLocationTouched(true);
-    setDeals(d.deals);
+    setDeals(d.deals.map(migrateLegacyAllDay));
     setOpenIndex(d.openIndex);
     loadDealIntoEditor(d.deals[d.openIndex]);
     setDraftOffer(null);
@@ -513,13 +538,13 @@ export default function Submit() {
           aria-label={`Edit deal ${i + 1}`}
         >
           <Pencil className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">Edit</span>
+          <span className="hidden md:inline">Edit</span>
         </Button>
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          className="h-8 px-2 text-destructive hover:text-destructive"
+          className="h-8 px-2 text-destructive-text hover:text-destructive-text"
           onClick={() => removeDeal(i)}
           aria-label={`Remove deal ${i + 1}`}
         >
@@ -737,7 +762,7 @@ export default function Submit() {
   const errorAlertRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!serverError) return;
-    errorAlertRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    errorAlertRef.current?.scrollIntoView({ behavior: scrollBehavior(), block: "center" });
   }, [serverError]);
 
   // Build the de-duplicated list of current validation problems for the summary.
@@ -753,19 +778,19 @@ export default function Submit() {
   if (submitted) {
     return (
       <div className="min-h-screen flex flex-col">
-        <SubmitHeader />
-        <div className="flex-1 flex items-center justify-center p-6">
+        <SiteHeader backTo="/" />
+        <main className="flex-1 flex items-center justify-center p-6">
           <Card className="max-w-md w-full text-center">
-            <CardContent className="pt-8 pb-8 space-y-4">
-              <CheckCircle className="h-16 w-16 text-[hsl(var(--happy))] mx-auto" />
-              <h2 className="text-2xl font-bold">Thank you!</h2>
+            <CardContent className="pt-8 pb-8 space-y-4" role="status">
+              <CheckCircle className="h-16 w-16 text-[hsl(var(--happy))] mx-auto" aria-hidden="true" />
+              <h1 className="text-2xl font-bold">Thank you!</h1>
               <p className="text-muted-foreground">
-                Your hoppy hour submission has been received and will be reviewed by our team.
-                Once approved, it will appear on the map.
+                We've received your {deals.length > 1 ? "deals" : "deal"} and will review {deals.length > 1 ? "them" : "it"} soon.
+                Once approved, {deals.length > 1 ? "they'll" : "it'll"} appear on the map.
               </p>
               <div className="flex gap-3 justify-center pt-2">
                 <Button variant="outline" asChild>
-                  <Link to="/">Back to Map</Link>
+                  <Link to="/">Back to map</Link>
                 </Button>
                 <Button
                   onClick={() => {
@@ -782,28 +807,30 @@ export default function Submit() {
                     setDraftOffer(null);
                   }}
                 >
-                  Submit Another
+                  Submit another
                 </Button>
               </div>
             </CardContent>
           </Card>
-        </div>
+        </main>
       </div>
     );
   }
 
   return (
     <div className="min-h-screen flex flex-col">
-      <SubmitHeader />
+      <SiteHeader backTo="/" />
       <main className="flex-1 flex justify-center p-4 md:p-8">
         <Card className="max-w-2xl w-full">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Clock className="h-5 w-5 text-primary" />
-              Submit a Hoppy Hour
-            </CardTitle>
+            <h1 className="flex items-center gap-2 text-2xl font-semibold leading-none tracking-tight">
+              <Clock className="h-5 w-5 text-primary" aria-hidden="true" />
+              Submit a deal
+            </h1>
             <CardDescription>
-              Know a great deal? Share it with the community. Submissions are reviewed before appearing on the map.
+              {venuePrefill
+                ? `Suggesting an edit to ${venuePrefill.venue_name}. Add the deals as they are now; a moderator compares them with what's listed before anything changes.`
+                : "Know a great deal? Share it with the community. Submissions are reviewed before appearing on the map."}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -811,18 +838,39 @@ export default function Submit() {
             {draftOffer && (
               <Alert className="mb-6">
                 <History className="h-4 w-4" />
-                <AlertTitle>Pick up where you left off?</AlertTitle>
+                <AlertTitle>
+                  {venuePrefill ? "You have an unfinished submission" : "Pick up where you left off?"}
+                </AlertTitle>
                 <AlertDescription>
                   <p>
                     {describeDraft(draftOffer)} · saved {formatSavedAt(draftOffer.savedAt)}
                   </p>
+                  {venuePrefill && (
+                    <p className="mt-1">
+                      Restoring it replaces the {venuePrefill.venue_name} details below. Your draft is kept
+                      until you choose.
+                    </p>
+                  )}
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <Button type="button" size="sm" onClick={() => restoreDraft(draftOffer)}>
-                      Restore draft
-                    </Button>
-                    <Button type="button" size="sm" variant="outline" onClick={discardDraft}>
-                      Start fresh
-                    </Button>
+                    {venuePrefill ? (
+                      <>
+                        <Button type="button" size="sm" onClick={discardDraft}>
+                          Discard draft
+                        </Button>
+                        <Button type="button" size="sm" variant="outline" onClick={() => restoreDraft(draftOffer)}>
+                          Restore draft instead
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button type="button" size="sm" onClick={() => restoreDraft(draftOffer)}>
+                          Restore draft
+                        </Button>
+                        <Button type="button" size="sm" variant="outline" onClick={discardDraft}>
+                          Start fresh
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </AlertDescription>
               </Alert>
@@ -851,9 +899,15 @@ export default function Submit() {
                   name="venue_name"
                   render={({ field }) => (
                     <FormItem id="field-venue_name">
-                      <FormLabel>Venue Name</FormLabel>
+                      <FormLabel>Venue name</FormLabel>
                       <FormControl>
-                        <Input placeholder="e.g. The Golden Tap" {...field} />
+                        <Input
+                          placeholder="e.g. The Golden Tap"
+                          autoComplete="off"
+                          autoCapitalize="words"
+                          enterKeyHint="next"
+                          {...field}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -861,7 +915,7 @@ export default function Submit() {
                 />
 
                 {/* Location: country + city (picked), optional street address */}
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-4 md:grid-cols-2">
                   <FormField
                     control={form.control}
                     name="country"
@@ -886,6 +940,8 @@ export default function Submit() {
                             value={selectedCity}
                             onChange={handleCityChange}
                             country={form.watch("country") || undefined}
+                            onUseTyped={handleCityTyped}
+                            typedValue={!selectedCity && cityValue ? cityValue : null}
                             proximity={
                               selectedCity
                                 ? { lng: selectedCity.lng, lat: selectedCity.lat }
@@ -907,10 +963,16 @@ export default function Submit() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>
-                        Street Address <span className="text-muted-foreground font-normal">(optional)</span>
+                        Street address <span className="text-muted-foreground font-normal">(optional)</span>
                       </FormLabel>
                       <FormControl>
-                        <Input placeholder="e.g. 123 Main St" {...field} />
+                        <Input
+                          placeholder="e.g. 123 Main St"
+                          autoComplete="off"
+                          autoCapitalize="words"
+                          enterKeyHint="next"
+                          {...field}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -937,7 +999,7 @@ export default function Submit() {
                           type="button"
                           variant="ghost"
                           size="sm"
-                          className="h-8 gap-1 px-2 text-destructive hover:text-destructive"
+                          className="h-8 gap-1 px-2 text-destructive-text hover:text-destructive-text"
                           onClick={() => removeDeal(openIndex)}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -961,44 +1023,41 @@ export default function Submit() {
                     };
                     return (
                       <FormItem id="field-days_of_week">
-                        <FormLabel>Days Available</FormLabel>
-                        {/* Quick-select row — stateless triggers, replace selection */}
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
+                        <FormLabel id="days-label">Days available</FormLabel>
+                        {/* Quick-select row — replaces the selection; pressed
+                            while the selection is exactly that set. */}
+                        <div className="flex gap-2" role="group" aria-label="Quick select days">
+                          <Chip
+                            size="lg"
+                            className="flex-1"
+                            selected={sameDays(selected, WEEKDAYS)}
                             onClick={() => field.onChange([...WEEKDAYS])}
-                            className="flex-1 min-h-[40px] rounded-full border border-border bg-card px-4 text-sm hover:bg-accent transition-colors"
                           >
                             Weekdays
-                          </button>
-                          <button
-                            type="button"
+                          </Chip>
+                          <Chip
+                            size="lg"
+                            className="flex-1"
+                            selected={sameDays(selected, EVERY_DAY)}
                             onClick={() => field.onChange([...EVERY_DAY])}
-                            className="flex-1 min-h-[40px] rounded-full border border-border bg-card px-4 text-sm hover:bg-accent transition-colors"
                           >
                             Every day
-                          </button>
+                          </Chip>
                         </div>
                         {/* Day chips — Monday first */}
-                        <div className="flex gap-1.5 sm:gap-2">
-                          {DAY_ORDER.map((day) => {
-                            const on = selected.includes(day.value);
-                            return (
-                              <button
-                                key={day.value}
-                                type="button"
-                                aria-pressed={on}
-                                onClick={() => toggleDay(day.value)}
-                                className={`flex-1 min-h-[44px] rounded-full border text-xs sm:text-sm transition-colors ${
-                                  on
-                                    ? "bg-primary text-primary-foreground border-primary"
-                                    : "bg-card border-border hover:bg-accent"
-                                }`}
-                              >
-                                {day.label}
-                              </button>
-                            );
-                          })}
+                        <div className="flex gap-1.5 md:gap-2" role="group" aria-labelledby="days-label">
+                          {WEEK_DAYS.map((day) => (
+                            <Chip
+                              key={day.value}
+                              size="lg"
+                              className="flex-1 px-0 text-xs sm:text-sm"
+                              selected={selected.includes(day.value)}
+                              onClick={() => toggleDay(day.value)}
+                              aria-label={day.long}
+                            >
+                              {day.short}
+                            </Chip>
+                          ))}
                         </div>
                         <FormMessage />
                       </FormItem>
@@ -1012,31 +1071,26 @@ export default function Submit() {
                   name="start_time"
                   render={() => (
                     <FormItem id="field-deal-hours">
-                      <FormLabel>Deal Hours</FormLabel>
+                      <FormLabel id="hours-label">Deal hours</FormLabel>
                       {/* Preset chips — 3×2 grid, single-select (radio behaviour) */}
-                      <div className="grid grid-cols-3 gap-2">
-                        {DEAL_PRESETS.map((preset) => {
-                          const on = activePreset === preset.key;
-                          return (
-                            <button
-                              key={preset.key}
-                              type="button"
-                              aria-pressed={on}
-                              onClick={() => selectPreset(preset)}
-                              className={`min-h-[44px] rounded-full border text-sm transition-colors ${
-                                on
-                                  ? "bg-primary text-primary-foreground border-primary"
-                                  : "bg-card border-border hover:bg-accent"
-                              }`}
-                            >
-                              {preset.label}
-                            </button>
-                          );
-                        })}
+                      <div className="grid grid-cols-3 gap-2" role="group" aria-labelledby="hours-label">
+                        {DEAL_PRESETS.map((preset) => (
+                          <Chip
+                            key={preset.key}
+                            size="lg"
+                            selected={activePreset === preset.key}
+                            onClick={() => selectPreset(preset)}
+                          >
+                            {preset.label}
+                          </Chip>
+                        ))}
                       </div>
 
                       {/* Adjustment row — revealed once a chip is tapped */}
-                      {activePreset !== null && (
+                      {activePreset === "all" && (
+                        <p className="mt-3 text-xs text-muted-foreground">{activeHint}</p>
+                      )}
+                      {activePreset !== null && activePreset !== "all" && (
                         <div className="mt-3">
                           <div className="flex items-center gap-2">
                             <select
@@ -1046,7 +1100,7 @@ export default function Submit() {
                                 const start = Number(e.target.value);
                                 commitTimes(start, bumpedEnd(start, endMin ?? start));
                               }}
-                              className="flex-1 min-h-[44px] rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              className="flex-1 min-h-[44px] rounded-md border border-input bg-background px-3 text-base md:text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             >
                               {TIME_OPTIONS.map((o) => (
                                 <option key={o.value} value={o.value}>
@@ -1062,7 +1116,7 @@ export default function Submit() {
                                 const end = Number(e.target.value);
                                 commitTimes(startMin ?? end, bumpedEnd(startMin ?? 0, end));
                               }}
-                              className="flex-1 min-h-[44px] rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              className="flex-1 min-h-[44px] rounded-md border border-input bg-background px-3 text-base md:text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             >
                               {TIME_OPTIONS.map((o) => (
                                 <option key={o.value} value={o.value}>
@@ -1085,12 +1139,14 @@ export default function Submit() {
                   name="description"
                   render={({ field }) => (
                     <FormItem id="field-description">
-                      <FormLabel>Deal Description</FormLabel>
+                      <FormLabel>Deal description</FormLabel>
                       <FormControl>
                         <Textarea
                           placeholder="e.g. Half-price craft beers and $5 appetizers"
                           className="resize-none"
                           rows={3}
+                          autoCapitalize="sentences"
+                          autoComplete="off"
                           {...field}
                         />
                       </FormControl>
@@ -1105,34 +1161,31 @@ export default function Submit() {
                   name="tags"
                   render={() => (
                     <FormItem>
-                      <FormLabel>Tags</FormLabel>
-                      <div className="flex flex-wrap gap-2">
+                      <FormLabel id="tags-label">Tags</FormLabel>
+                      <div className="flex flex-wrap gap-2" role="group" aria-labelledby="tags-label">
                         {TAGS.map((tag) => (
                           <FormField
                             key={tag}
                             control={form.control}
                             name="tags"
-                            render={({ field }) => (
-                              <label
-                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm cursor-pointer transition-colors capitalize ${
-                                  field.value?.includes(tag)
-                                    ? "bg-accent text-accent-foreground border-primary/30"
-                                    : "bg-card border-border hover:bg-accent"
-                                }`}
-                              >
-                                <Checkbox
-                                  className="sr-only"
-                                  checked={field.value?.includes(tag)}
-                                  onCheckedChange={(checked) => {
-                                    const updated = checked
-                                      ? [...(field.value ?? []), tag]
-                                      : field.value?.filter((v: string) => v !== tag) ?? [];
-                                    field.onChange(updated);
-                                  }}
-                                />
-                                {tag}
-                              </label>
-                            )}
+                            render={({ field }) => {
+                              const on = field.value?.includes(tag) ?? false;
+                              return (
+                                <Chip
+                                  className="capitalize"
+                                  selected={on}
+                                  onClick={() =>
+                                    field.onChange(
+                                      on
+                                        ? (field.value ?? []).filter((v: string) => v !== tag)
+                                        : [...(field.value ?? []), tag],
+                                    )
+                                  }
+                                >
+                                  {tag}
+                                </Chip>
+                              );
+                            }}
                           />
                         ))}
                       </div>
@@ -1223,8 +1276,8 @@ export default function Submit() {
                     : submitting
                       ? "Submitting…"
                       : multiDeal
-                        ? `Submit Hoppy Hour · ${deals.length} deals`
-                        : "Submit Hoppy Hour"}
+                        ? `Submit ${deals.length} deals`
+                        : "Submit deal"}
                 </Button>
               </form>
             </Form>
@@ -1232,21 +1285,5 @@ export default function Submit() {
         </Card>
       </main>
     </div>
-  );
-}
-
-function SubmitHeader() {
-  return (
-    <header className="flex items-center gap-3 px-6 py-3 border-b border-border bg-card">
-      <Button variant="ghost" size="icon" asChild>
-        <Link to="/">
-          <ArrowLeft className="h-4 w-4" />
-        </Link>
-      </Button>
-      <div className="flex items-center gap-2">
-        <img src="/favicon.ico" alt="HoppyHour" className="h-8 w-8" />
-        <h1 className="text-lg font-bold tracking-tight">HoppyHour</h1>
-      </div>
-    </header>
   );
 }

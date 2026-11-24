@@ -1,7 +1,23 @@
 # Cloudflare Pages response headers for static assets (the SPA shell).
 # Functions under /api set their own headers.
+#
+# Content-Security-Policy notes (verified against the live edge, which injects
+# extra scripts the source HTML doesn't have):
+#  - script-src 'unsafe-inline': covers the theme script in index.html AND
+#    Cloudflare's per-request JavaScript Detections snippet (Bot Fight Mode).
+#    That snippet carries a ray ID, so a hash can't match it; Cloudflare's
+#    supported alternative is a per-request nonce in this header, which needs a
+#    Pages middleware. Script *hosts* are still pinned: an injected
+#    <script src="https://evil..."> is blocked.
+#  - challenges.cloudflare.com: Turnstile (script + iframe).
+#  - static.cloudflareinsights.com / cloudflareinsights.com: Web Analytics
+#    beacon (edge-injected) and its reporting endpoint.
+#  - style-src 'unsafe-inline': Radix / react-remove-scroll inject <style> tags.
+#  - worker-src/child-src blob:: Mapbox GL runs its workers from blob: URLs.
+#  - *.mapbox.com: styles, tiles, sprites, glyphs and telemetry.
 /*
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: geolocation=(self), microphone=(), payment=(), usb=()
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.mapbox.com; font-src 'self' data:; connect-src 'self' https://*.mapbox.com https://cloudflareinsights.com; worker-src 'self' blob:; child-src blob:; frame-src https://challenges.cloudflare.com; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'

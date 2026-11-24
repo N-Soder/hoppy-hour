@@ -1,4 +1,5 @@
-import { DAYS_SHORT } from "@/lib/constants";
+import { DAYS_SHORT, WEEK_ORDER, weekIndex } from "@/lib/constants";
+import { toMinutes } from "@/lib/format";
 import type { HappyHour } from "@/hooks/use-venues";
 
 export interface GroupedHappyHour {
@@ -53,68 +54,52 @@ export function groupHappyHours(hours: HappyHour[]): GroupedHappyHour[] {
 }
 
 /**
- * Formats an array of day indices (0=Sun…6=Sat) into a human-readable string.
+ * Formats an array of day indices (0=Sun…6=Sat) into a human-readable string,
+ * reading the week Monday-first.
  *
  * Rules:
- * - Contiguous run of 3+ days (including week-wrapping) → "Mon–Fri" (first–last)
- * - 1–2 days, or any non-contiguous set → comma-separated short names
+ * - All seven days → "Every day"
+ * - Contiguous run of 3+ days in Monday-first order, including a run that
+ *   wraps from Sunday back to Monday → "Mon–Fri" (first–last)
+ * - 1–2 days, or any non-contiguous set → comma-separated short names, in
+ *   Monday-first order
  *
  * Examples:
  *   [1,2,3,4,5] → "Mon–Fri"
- *   [0,1,2,3,4,5,6] → "Sun–Sat"
- *   [0,6] → "Sun, Sat"   (non-contiguous even though they are adjacent wrapping)
+ *   [0,1,2,3,4,5,6] → "Every day"
+ *   [0,6] → "Sat, Sun"
  *   [3]   → "Wed"
  *   [1,3,5] → "Mon, Wed, Fri"
- *   [5,6,0] → "Fri–Sun"  (week-wrapping contiguous range)
+ *   [5,6,0] → "Fri–Sun"
+ *   [6,0,1] → "Sat–Mon"  (wraps past the end of the week)
  */
 export function formatDayRange(days: number[]): string {
   if (!days || days.length === 0) return "";
-  const sorted = [...days].sort((a, b) => a - b);
+  const unique = Array.from(new Set(days));
+  if (unique.length === 7) return "Every day";
+  // Positions in the Monday-first week (Mon=0 … Sun=6), ascending.
+  const pos = unique.map(weekIndex).sort((a, b) => a - b);
+  const name = (p: number) => DAYS_SHORT[WEEK_ORDER[p]];
 
-  // Check simple forward-contiguous run (no wrapping)
-  const isForwardContiguous =
-    sorted.length >= 3 &&
-    sorted[sorted.length - 1] - sorted[0] === sorted.length - 1;
-
-  if (isForwardContiguous) {
-    return `${DAYS_SHORT[sorted[0]]}–${DAYS_SHORT[sorted[sorted.length - 1]]}`;
-  }
-
-  // Fix #10: check for week-wrapping contiguous range, e.g. [5,6,0] → Fri–Sun.
-  // A wrap is contiguous if there is exactly one "gap" in the sorted array
-  // (the wrap point from Sat=6 back to Sun=0) and all days before + after the
-  // gap are consecutive.
-  if (sorted.length >= 3) {
-    // Find the single gap where the sequence breaks (day[i+1] !== day[i] + 1)
-    let gapIndex = -1;
-    let gapCount = 0;
-    for (let i = 0; i < sorted.length - 1; i++) {
-      if (sorted[i + 1] !== sorted[i] + 1) {
-        gapCount++;
-        gapIndex = i;
+  if (pos.length >= 3) {
+    // Treat the week as a circle: the set is one contiguous run when exactly
+    // one gap between consecutive members (wrapping Sun→Mon) is larger than 1.
+    let gaps = 0;
+    let runStart = pos[0];
+    for (let i = 0; i < pos.length; i++) {
+      const next = pos[(i + 1) % pos.length] + (i + 1 === pos.length ? 7 : 0);
+      if (next - pos[i] !== 1) {
+        gaps++;
+        runStart = pos[(i + 1) % pos.length];
       }
     }
-    // Exactly one interior gap → potential wrap
-    if (gapCount === 1) {
-      const tail = sorted.slice(0, gapIndex + 1);   // days before gap (lower numbers = start of week)
-      const head = sorted.slice(gapIndex + 1);       // days after gap  (higher numbers = end of week)
-      // The wrap is valid if head ends at 6 (Sat) and tail starts at 0 (Sun),
-      // and together they form a contiguous run around the week boundary.
-      const wrapsAround =
-        head[head.length - 1] === 6 &&
-        tail[0] === 0 &&
-        head.length + tail.length === sorted.length;
-      // Check both segments are internally contiguous
-      const headContiguous = head[head.length - 1] - head[0] === head.length - 1;
-      const tailContiguous = tail[tail.length - 1] - tail[0] === tail.length - 1;
-      if (wrapsAround && headContiguous && tailContiguous) {
-        // Display as "first-of-head–last-of-tail"
-        return `${DAYS_SHORT[head[0]]}–${DAYS_SHORT[tail[tail.length - 1]]}`;
-      }
+    if (gaps === 1) {
+      const runEnd = (runStart + pos.length - 1) % 7;
+      return `${name(runStart)}–${name(runEnd)}`;
     }
   }
 
-  return sorted.map((d) => DAYS_SHORT[d]).join(", ");
+  return pos.map(name).join(", ");
 }
 
 /**
@@ -133,4 +118,46 @@ export function ungroupHappyHour(
     tags: group.tags,
     is_active: group.is_active,
   }));
+}
+
+/** Monday-first sort key for a set of days: its earliest day in week order. */
+function firstWeekDay(days: number[]): number {
+  return days.length === 0 ? 7 : Math.min(...days.map(weekIndex));
+}
+
+/**
+ * Groups deals that share the exact same days_of_week set under one header,
+ * then sorts those sections in week order (Monday first; the section that
+ * starts earliest in the week comes first, and a shorter set wins a tie).
+ * Deals within each section are sorted by start time.
+ */
+export function groupByDaySet(
+  groups: GroupedHappyHour[],
+): { days: number[]; deals: GroupedHappyHour[] }[] {
+  const map = new Map<string, { days: number[]; deals: GroupedHappyHour[] }>();
+  for (const group of groups) {
+    const key = [...group.days_of_week].sort((a, b) => a - b).join(",");
+    const existing = map.get(key);
+    if (existing) {
+      existing.deals.push(group);
+    } else {
+      map.set(key, { days: group.days_of_week, deals: [group] });
+    }
+  }
+  return Array.from(map.values())
+    .sort(
+      (a, b) =>
+        firstWeekDay(a.days) - firstWeekDay(b.days) || a.days.length - b.days.length,
+    )
+    .map(({ days, deals }) => ({
+      days,
+      deals: deals.slice().sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time)),
+    }));
+}
+
+/** The deals that run on `day` (0=Sun…6=Sat), earliest start first. */
+export function dealsOnDay(groups: GroupedHappyHour[], day: number): GroupedHappyHour[] {
+  return groups
+    .filter((g) => g.days_of_week.includes(day))
+    .sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time));
 }

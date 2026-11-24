@@ -3,10 +3,17 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { VitePWA } from "vite-plugin-pwa";
 
+// `wrangler pages dev` (Functions + local D1), which serves /api in development.
+const API_ORIGIN = "http://localhost:8788";
+
 // https://vitejs.dev/config/
 export default defineConfig({
   server: {
-    host: "::",
+    // Loopback only. The /api proxy forwards the caller's Host header, and the
+    // admin middleware's DEV_BYPASS_ACCESS trusts a loopback Host — so listening
+    // on all interfaces would let anyone on the LAN send `Host: localhost` and
+    // get admin access. Use `npm run dev -- --host` only with the bypass off.
+    host: "localhost",
     port: 8080,
     hmr: {
       overlay: false,
@@ -14,8 +21,26 @@ export default defineConfig({
     // Proxy /api to `wrangler pages dev` (functions + local D1) during dev, so
     // the Vite HMR server and the real API run together. Start wrangler with:
     //   npx wrangler pages dev dist --port 8788
+    //
+    // The admin middleware's CSRF check compares the request's Origin with the
+    // URL wrangler sees (:8788), so a same-origin write from this server (:8080)
+    // would be refused. Rewrite Origin to the API's origin, but only when it is
+    // this dev server's own origin; any other Origin is passed through and
+    // still refused.
     proxy: {
-      "/api": "http://localhost:8788",
+      "/api": {
+        target: API_ORIGIN,
+        // As with the string shorthand: send Host as the API's host.
+        changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on("proxyReq", (proxyReq, req) => {
+            const origin = req.headers.origin;
+            if (origin && req.headers.host && origin === `http://${req.headers.host}`) {
+              proxyReq.setHeader("Origin", API_ORIGIN);
+            }
+          });
+        },
+      },
     },
   },
   plugins: [
@@ -25,7 +50,7 @@ export default defineConfig({
       manifest: {
         name: "HoppyHour",
         short_name: "HoppyHour",
-        description: "Discover the best hoppy hour deals near you.",
+        description: "Find happy hour deals near you.",
         theme_color: "#B35C0C",
         background_color: "#F8F4EC",
         display: "standalone",
