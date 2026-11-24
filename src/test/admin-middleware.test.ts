@@ -14,6 +14,25 @@ describe("admin middleware DEV_BYPASS_ACCESS", () => {
     expect(res.status).toBe(200);
   });
 
+  it("still blocks cross-site writes when the bypass is on", async () => {
+    const { c, next } = ctx("http://localhost:8788/api/admin/venues/abc", { DEV_BYPASS_ACCESS: "1" }, {
+      method: "DELETE",
+      headers: { Origin: "https://evil.test", "Sec-Fetch-Site": "cross-site" },
+    });
+    const res = (await onRequest(c)) as Response;
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toBe(403);
+  });
+
+  it("allows same-origin writes when the bypass is on", async () => {
+    const { c, next } = ctx("http://localhost:8788/api/admin/venues", { DEV_BYPASS_ACCESS: "1" }, {
+      method: "POST",
+      headers: { Origin: "http://localhost:8788", "Sec-Fetch-Site": "same-origin" },
+    });
+    await onRequest(c);
+    expect(next).toHaveBeenCalled();
+  });
+
   it("ignores the flag on a deployed host (fails closed)", async () => {
     const { c, next } = ctx("https://example.pages.dev/api/admin/me", { DEV_BYPASS_ACCESS: "1" });
     const res = (await onRequest(c)) as Response;

@@ -6,7 +6,11 @@ import { VitePWA } from "vite-plugin-pwa";
 // https://vitejs.dev/config/
 export default defineConfig({
   server: {
-    host: "::",
+    // Loopback only. The /api proxy forwards the caller's Host header, and the
+    // admin middleware's DEV_BYPASS_ACCESS trusts a loopback Host — so listening
+    // on all interfaces would let anyone on the LAN send `Host: localhost` and
+    // get admin access. Use `npm run dev -- --host` only with the bypass off.
+    host: "localhost",
     port: 8080,
     hmr: {
       overlay: false,

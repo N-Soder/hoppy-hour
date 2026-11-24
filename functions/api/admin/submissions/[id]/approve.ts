@@ -35,7 +35,7 @@
 import type { Env } from "../../../../_shared/db";
 import { nowIso, toHms } from "../../../../_shared/db";
 import { error, json, readJson } from "../../../../_shared/http";
-import { normalizeTags, validateDealFields, isStringLen, isLatLng } from "../../../../_shared/validate";
+import { normalizeTags, validateDealFields, validateVenue } from "../../../../_shared/validate";
 import { withOptionalColumns } from "../../../../_shared/schema-compat";
 import { timezoneFor } from "../../../../_shared/timezone";
 import { REVIEW_COLUMNS, reviewAssignments, reviewerOf } from "../../../../_shared/review";
@@ -64,11 +64,13 @@ function validateVenueFields(
   label: string,
   allowed: readonly ApproveLocationSource[],
 ): Response | null {
-  if (!isStringLen(v.name, 200)) return error(`${label}.name is required (max 200)`, 400);
-  if (!isStringLen(v.address, 500)) return error(`${label}.address is required (max 500)`, 400);
-  if (!isLatLng(v.lat, v.lng)) {
+  // Shared venue rules (name, address, ISO country, in-range coordinates),
+  // with the location failure worded for the reviewer.
+  const err = validateVenue(v, { requireCoords: true });
+  if (err?.startsWith("lat")) {
     return error(`${label}.lat and ${label}.lng are required; ${LOCATION_REQUIRED}`, 400);
   }
+  if (err) return error(`${label}.${err}`, 400);
   if (!allowed.includes(v.location_source)) {
     return error(`${label}.location_source must be one of ${allowed.join(", ")}; ${LOCATION_REQUIRED}`, 400);
   }
@@ -219,7 +221,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params, 
           `INSERT INTO venues (id, name, address, country, lat, lng, status, created_at, updated_at
                                ${withZone ? ", timezone" : ""})
            VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7, ?7 ${withZone ? ", ?8" : ""})`,
-        ).bind(newVenueId, v.name, v.address, v.country ?? null, v.lat, v.lng, now,
+        ).bind(newVenueId, v.name, v.address, v.country?.toUpperCase() ?? null, v.lat, v.lng, now,
                ...(withZone ? [newVenueZone] : [])),
       );
     } else if (b.venue_update) {
@@ -230,7 +232,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params, 
           `UPDATE venues SET name = ?2, address = ?3, country = ?4, lat = ?5, lng = ?6, updated_at = ?7
                              ${setZone ? ", timezone = ?8" : ""}
             WHERE id = ?1`,
-        ).bind(targetVenueId, v.name, v.address, v.country ?? null, v.lat, v.lng, now,
+        ).bind(targetVenueId, v.name, v.address, v.country?.toUpperCase() ?? null, v.lat, v.lng, now,
                ...(setZone ? [updateZone] : [])),
       );
     } else if (withZone && updateZone) {

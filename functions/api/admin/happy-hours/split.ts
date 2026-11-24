@@ -17,7 +17,7 @@
 import type { Env } from "../../../_shared/db";
 import { nowIso, toHms } from "../../../_shared/db";
 import { error, json, readJson } from "../../../_shared/http";
-import { normalizeTags, validateDealFields } from "../../../_shared/validate";
+import { normalizeTags, validateDealFields, validateIdList } from "../../../_shared/validate";
 import { dealGroupKey, loadGroup, type DealFields } from "../../../_shared/deal-group";
 
 interface Body {
@@ -28,6 +28,8 @@ interface Body {
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const b = await readJson<Body>(request);
   if (!b || !b.record || typeof b.record !== "object") return error("ids and record required", 400);
+  const idsErr = validateIdList(b.ids);
+  if (idsErr) return error(idsErr, 400);
   const r = b.record;
   const fieldErr = validateDealFields(r);
   if (fieldErr) return error(`record: ${fieldErr}`, 400);
