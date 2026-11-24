@@ -1,6 +1,6 @@
 import { useId, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, ArrowUpDown, ExternalLink, Globe, Loader2, MapPin, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, ExternalLink, Globe, Loader2, MapPin, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Venue } from "@/lib/api-types";
 import { Button } from "@/components/ui/button";
@@ -420,6 +420,11 @@ export default function VenueManager() {
                 <TableRow key={venue.id}>
                   <TableCell className="py-3 font-medium">
                     {venue.name}
+                    {!venue.country && (
+                      <span className="ml-2 inline-block whitespace-nowrap rounded-full border border-amber-300 bg-amber-50 px-1.5 text-[11px] font-medium leading-4 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                        No country
+                      </span>
+                    )}
                     {/* Narrow screens hide the Address and Deals columns: the address goes
                         here, the deal count beside the status. */}
                     <span className="mt-0.5 block text-xs font-normal text-muted-foreground sm:hidden">
@@ -517,7 +522,18 @@ export default function VenueManager() {
                 id={fid("country")}
                 value={formData.country || null}
                 onChange={(code) => setFormData((f) => ({ ...f, country: code }))}
+                // An existing venue saved without a country: flag it, but let
+                // every other edit save as before.
+                needsValue={!!editVenue && !formData.country}
+                aria-describedby={editVenue && !formData.country ? fid("country-missing") : undefined}
               />
+              {editVenue && !formData.country && (
+                <p id={fid("country-missing")} className="flex items-start gap-1.5 text-xs text-amber-800 dark:text-amber-300">
+                  <AlertTriangle className="mt-px h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+                  This venue has no country. Pick one so address look-ups search the right country. You can still save
+                  other changes without it.
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor={fid("address")}>
