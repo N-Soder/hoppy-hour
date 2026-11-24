@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { VALID_TAGS } from "@/lib/constants";
 import { formatClock } from "@/lib/format";
 import { RADIUS_OPTIONS, formatDistanceRadius } from "@/lib/radius";
+import { placeSearchUrl } from "@/lib/geocode";
 
 const TAG_OPTIONS = VALID_TAGS;
 
@@ -38,6 +39,8 @@ interface FiltersPanelProps {
   searchQuery: string;
   onSearchQueryChange: (q: string) => void;
   onLocationSearch: (coords: { lng: number; lat: number }) => void;
+  /** Where the list is searching now: place results near it rank first. */
+  searchCentre: { lng: number; lat: number } | null;
   mapboxToken: string | undefined;
 }
 
@@ -73,6 +76,7 @@ export default function FiltersPanel({
   searchQuery,
   onSearchQueryChange,
   onLocationSearch,
+  searchCentre,
 }: FiltersPanelProps) {
   const [geocoding, setGeocoding] = useState(false);
   const [radiusOpen, setRadiusOpen] = useState(false);
@@ -103,9 +107,8 @@ export default function FiltersPanel({
     e.currentTarget.blur();
     setGeocoding(true);
     try {
-      const res = await fetch(
-        `/api/geocode?q=${encodeURIComponent(searchQuery.trim())}`
-      );
+      // Worldwide, nearest first (see placeSearchUrl).
+      const res = await fetch(placeSearchUrl(searchQuery, searchCentre));
       const geoData = await res.json();
       if (geoData.features?.length > 0) {
         const [lng, lat] = geoData.features[0].center;

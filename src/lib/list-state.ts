@@ -1,6 +1,6 @@
 // Which of the venue list's states to show, and what an empty list should say.
 // Pure functions so each state is unit-tested; Index.tsx only wires them up.
-import { formatDistanceRadius } from "./radius";
+import { DEFAULT_RADIUS, formatDistanceRadius } from "./radius";
 
 export type ListState = "loading" | "error" | "empty" | "ready";
 
@@ -44,7 +44,10 @@ export interface EmptyStateCopy {
   detail: string;
   /** Human-readable active filters, for the "Filters:" line. */
   activeFilters: string[];
-  /** Offer "Clear filters" (something other than the radius is narrowing). */
+  /**
+   * Offer "Clear filters": a search, tag, date/time or non-default radius is
+   * narrowing the list, so clearing them changes what is shown.
+   */
   canClear: boolean;
 }
 
@@ -56,6 +59,8 @@ export function describeEmptyState(i: EmptyStateInput): EmptyStateCopy {
     activeFilters.push(i.tags.map((t) => t.charAt(0).toUpperCase() + t.slice(1)).join(", "));
   }
   if (i.whenPhrase) activeFilters.push(i.whenPhrase);
+  // A radius other than the default is a filter too: "Clear filters" puts it back.
+  if (i.radiusMeters !== DEFAULT_RADIUS) activeFilters.push(`Within ${formatDistanceRadius(i.radiusMeters)}`);
   const canClear = activeFilters.length > 0;
 
   if (i.venuesInRadius > 0 && q) {

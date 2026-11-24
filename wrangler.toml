@@ -40,6 +40,7 @@ ACCESS_TEAM_DOMAIN = "soderholm.cloudflareaccess.com"
 ACCESS_AUD = "9292f8c6ebaf464705d47161adaf1497143afdbbc53b39b156293ccab6b22d25"
 # Fallback only: /api/geocode uses this when the client doesn't send its own
 # ?country= (e.g. the submit form's country picker sends the one the user
-# selected, which always wins — see functions/api/geocode.ts).
+# selected, which always wins — see functions/api/geocode.ts). The home page's
+# place search sends ?scope=world and is never restricted by it.
 GEOCODE_COUNTRY = "AU"
 VITE_TURNSTILE_SITE_KEY = "0x4AAAAAAD2ZhGDeYRdfYxJw"

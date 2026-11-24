@@ -68,9 +68,22 @@ export function formatTimeRange(start: string | number, end: string | number): s
   return `${s.hm} ${s.meridiem}–${e.hm} ${e.meridiem}`;
 }
 
-// Metres under 1km are rounded ("950m"); otherwise one decimal ("1.3km").
-export function formatDistance(m: number): string {
-  return m < 1000 ? `${Math.round(m)}m` : `${(m / 1000).toFixed(1)}km`;
+/**
+ * A distance for people: whole metres under 1 km ("340 m"), one decimal up to
+ * 10 km ("4.5 km"), then whole kilometres with the locale's thousands
+ * separator ("12,528 km"). A no-break space joins number and unit so they
+ * never wrap apart. `locale` defaults to the browser's.
+ */
+export function formatDistance(m: number, locale?: string): string {
+  const metres = Math.max(0, Math.round(Number.isFinite(m) ? m : 0));
+  if (metres < 1000) return `${metres}\u00a0m`;
+  const km = metres / 1000;
+  // 9,950 m and up would round to "10.0 km": show it as whole kilometres.
+  if (km < 9.95) {
+    const oneDecimal = new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    return `${oneDecimal.format(km)}\u00a0km`;
+  }
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(Math.round(km))}\u00a0km`;
 }
 
 /** "1 deal", "2 deals", "0 venues". */

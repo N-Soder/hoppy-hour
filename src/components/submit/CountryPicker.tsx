@@ -17,10 +17,14 @@ interface CountryPickerProps {
   value: string | null;
   onChange: (code: string) => void;
   id?: string;
+  /** Mark the empty picker as needing a value (a warning, not a block). */
+  needsValue?: boolean;
+  /** Id of the text that explains the warning. */
+  "aria-describedby"?: string;
 }
 
 /** Searchable country picker over the bundled ISO 3166-1 list. */
-export function CountryPicker({ value, onChange, id }: CountryPickerProps) {
+export function CountryPicker({ value, onChange, id, needsValue, "aria-describedby": describedBy }: CountryPickerProps) {
   const [open, setOpen] = useState(false);
   const selected = countryByCode(value);
 
@@ -33,7 +37,11 @@ export function CountryPicker({ value, onChange, id }: CountryPickerProps) {
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className="w-full justify-between font-normal min-h-[44px]"
+          aria-describedby={describedBy}
+          className={cn(
+            "w-full justify-between font-normal min-h-[44px]",
+            needsValue && !selected && "border-amber-500 dark:border-amber-500",
+          )}
         >
           {selected ? (
             <span className="flex items-center gap-2">
@@ -41,7 +49,9 @@ export function CountryPicker({ value, onChange, id }: CountryPickerProps) {
               {selected.name}
             </span>
           ) : (
-            <span className="text-muted-foreground">Select country</span>
+            <span className={needsValue ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground"}>
+              {needsValue ? "No country set: select one" : "Select country"}
+            </span>
           )}
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
         </Button>

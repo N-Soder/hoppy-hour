@@ -5,6 +5,7 @@ import VenueDetail, { ScrollCue, VenueStatusLine, type VenueStatus } from "@/com
 import type { VenueWithHappyHours } from "@/hooks/use-venues";
 import { formatDistance, formatTimeRange, type SelectionLabel } from "@/lib/format";
 import { groupHappyHours } from "@/lib/happy-hour-utils";
+import { VenueDetailSkeleton } from "@/components/VenueList";
 import { cn } from "@/lib/utils";
 
 export type SheetMode = "compact" | "expanded";
@@ -217,5 +218,46 @@ export default function VenueSheet({
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * The sheet while a shared venue link is still loading (or failed): the same
+ * compact frame, with the list's skeleton in place of the venue, and a way to
+ * close it. Not modal, so the map stays usable behind it.
+ */
+export function VenueSheetPlaceholder({ failed, onClose }: { failed: boolean; onClose: () => void }) {
+  return (
+    <div
+      role="dialog"
+      aria-modal={false}
+      aria-label={failed ? "Venue couldn't load" : "Loading venue"}
+      data-venue-sheet=""
+      className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-w-xl flex-col rounded-t-2xl border border-b-0 bg-background px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-1 shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.25)] animate-in slide-in-from-bottom-4 duration-200"
+    >
+      <div className="flex h-6 items-center justify-center" aria-hidden="true">
+        <span className="h-1.5 w-12 rounded-full bg-muted-foreground/40" />
+      </div>
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1 pb-1">
+          {failed ? (
+            <p role="alert" className="text-sm text-muted-foreground">
+              Couldn't load this venue. Check your connection and try again.
+            </p>
+          ) : (
+            <VenueDetailSkeleton />
+          )}
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="-mr-2 -mt-1 h-9 w-9 flex-shrink-0 rounded-full"
+          onClick={onClose}
+          aria-label="Close venue details"
+        >
+          <X className="h-5 w-5" aria-hidden="true" />
+        </Button>
+      </div>
+    </div>
   );
 }
