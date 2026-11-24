@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   groupHappyHours,
   formatDayRange,
+  dealsOnDay,
   groupByDaySet,
   ungroupHappyHour,
 } from "@/lib/happy-hour-utils";
@@ -219,5 +220,32 @@ describe("groupByDaySet", () => {
   it("sorts deals in a group by start time", () => {
     const out = groupByDaySet([g([1], "18:00:00", "late"), g([1], "09:00:00", "early")]);
     expect(out[0].deals.map((d) => d.description)).toEqual(["early", "late"]);
+  });
+});
+
+// ─── dealsOnDay ──────────────────────────────────────────────────────────────
+
+describe("dealsOnDay", () => {
+  const g = (days: number[], start: string, id: string) => ({
+    ids: [id],
+    venue_id: "v",
+    days_of_week: days,
+    start_time: start,
+    end_time: "23:59:00",
+    description: id,
+    tags: null,
+    is_active: true,
+  });
+
+  it("keeps the deals that run on the day, earliest first", () => {
+    const out = dealsOnDay(
+      [g([1, 2, 3], "18:00:00", "evening"), g([4], "12:00:00", "thu"), g([0, 2], "09:30:00", "morning")],
+      2,
+    );
+    expect(out.map((d) => d.description)).toEqual(["morning", "evening"]);
+  });
+
+  it("is empty when nothing runs that day", () => {
+    expect(dealsOnDay([g([4], "12:00:00", "thu")], 2)).toEqual([]);
   });
 });

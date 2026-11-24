@@ -5,9 +5,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import LiveBadge from "@/components/LiveBadge";
 import type { VenueWithHappyHours } from "@/hooks/use-venues";
-import { DAYS_SHORT } from "@/lib/constants";
+import { DAYS_LONG } from "@/lib/constants";
 import { formatDistance, formatTimeRange, plural, type SelectionLabel } from "@/lib/format";
-import { formatDayRange, groupByDaySet, groupHappyHours, type GroupedHappyHour } from "@/lib/happy-hour-utils";
+import { dealsOnDay, formatDayRange, groupByDaySet, groupHappyHours, type GroupedHappyHour } from "@/lib/happy-hour-utils";
 import { directionsUrlForBrowser } from "@/lib/directions";
 import { suggestEditUrl } from "@/lib/venue-prefill";
 import { cn } from "@/lib/utils";
@@ -95,7 +95,7 @@ interface VenueDetailProps {
   selection: SelectionLabel;
   /** Deals on at the selection (to mark them). */
   filteredHappyHourIds: Set<string>;
-  /** Weekday of the selected date (0=Sun…6=Sat): its deals come first. */
+  /** Weekday of the selected date (0=Sun…6=Sat): its deals are listed first. */
   selectedDay: number;
   selectedIsToday: boolean;
   /** "Perth time" when the venue's clock differs from the viewer's (deal times are venue time). */
@@ -109,8 +109,9 @@ interface VenueDetailProps {
 }
 
 /**
- * The full venue detail: name, address, distance, actions, then deals grouped
- * by day in Monday-first order with the selected day's groups first.
+ * The full venue detail: name, address, distance, actions, then the selected
+ * day's deals ("Today" when it is today) by start time, each with the days it
+ * runs, then the venue's other deals grouped by day set in Monday-first order.
  * Shared by the desktop side panel and the phone bottom sheet.
  */
 const VenueDetail = forwardRef<HTMLHeadingElement, VenueDetailProps>(function VenueDetail(
@@ -118,13 +119,12 @@ const VenueDetail = forwardRef<HTMLHeadingElement, VenueDetailProps>(function Ve
   headingRef,
 ) {
   const grouped = groupHappyHours(venue.happy_hours);
-  const sections = groupByDaySet(grouped);
-  // Stable partition: the selected day's sections first, then the rest in week order.
-  const ordered = [
-    ...sections.filter((s) => s.days.includes(selectedDay)),
-    ...sections.filter((s) => !s.days.includes(selectedDay)),
-  ];
-  const dayMark = selectedIsToday ? "Today" : DAYS_SHORT[selectedDay];
+  const today = dealsOnDay(grouped, selectedDay);
+  // Today's deals carry their day set, so the rest of the week lists only the
+  // others: the full schedule without printing a deal twice.
+  const todayIds = new Set(today.map((d) => d.ids[0]));
+  const sections = groupByDaySet(grouped.filter((d) => !todayIds.has(d.ids[0])));
+  const dayName = selectedIsToday ? "Today" : DAYS_LONG[selectedDay];
 
   return (
     <div className="space-y-4">
@@ -151,59 +151,91 @@ const VenueDetail = forwardRef<HTMLHeadingElement, VenueDetailProps>(function Ve
 
       <VenueActions venue={venue} />
 
-      <section className="border-t border-border pt-4" aria-labelledby={`${headingId}-deals`}>
-        <h3 id={`${headingId}-deals`} className="mb-3 flex items-baseline gap-1.5 text-sm font-semibold">
-          Deals
-          {zoneNote && <span className="text-xs font-normal text-muted-foreground">· times are {zoneNote}</span>}
-        </h3>
-        {ordered.length === 0 ? (
+      {grouped.length === 0 ? (
+        <section className="border-t border-border pt-4" aria-labelledby={`${headingId}-deals`}>
+          <h3 id={`${headingId}-deals`} className="mb-1 text-sm font-semibold">
+            Deals
+          </h3>
           <p className="text-sm text-muted-foreground">No deals listed</p>
-        ) : (
-          <div className="space-y-4">
-            {ordered.map(({ days, deals }) => {
-              const isSelectedDay = days.includes(selectedDay);
-              return (
-                <div
-                  key={days.join(",")}
-                  className={cn("border-l-2 pl-3", isSelectedDay ? "border-primary" : "border-primary/25")}
-                >
-                  <h4 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    {formatDayRange(days)}
-                    {isSelectedDay && (
-                      <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] normal-case tracking-normal text-primary-foreground">
-                        {dayMark}
-                      </span>
-                    )}
-                  </h4>
-                  <ul className="space-y-3">
-                    {deals.map((deal) => (
-                      <DealItem
-                        key={deal.ids[0]}
-                        deal={deal}
-                        on={deal.ids.some((id) => filteredHappyHourIds.has(id))}
-                        selection={selection}
-                      />
-                    ))}
-                  </ul>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
+        </section>
+      ) : (
+        <>
+          <section className="border-t border-border pt-4" aria-labelledby={`${headingId}-today`}>
+            <h3 id={`${headingId}-today`} className="mb-3 flex items-baseline gap-1.5 text-sm font-semibold">
+              {dayName}
+              {zoneNote && <span className="text-xs font-normal text-muted-foreground">· times are {zoneNote}</span>}
+            </h3>
+            {today.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No deals {selectedIsToday ? "today" : `on ${DAYS_LONG[selectedDay]}`}
+              </p>
+            ) : (
+              <ul className="space-y-3 border-l-2 border-primary pl-3">
+                {today.map((deal) => (
+                  <DealItem
+                    key={deal.ids[0]}
+                    deal={deal}
+                    on={deal.ids.some((id) => filteredHappyHourIds.has(id))}
+                    selection={selection}
+                    days={deal.days_of_week}
+                  />
+                ))}
+              </ul>
+            )}
+          </section>
+
+          {sections.length > 0 && (
+            <section className="border-t border-border pt-4" aria-labelledby={`${headingId}-week`}>
+              <h3 id={`${headingId}-week`} className="mb-3 text-sm font-semibold">
+                Other days
+              </h3>
+              <div className="space-y-4">
+                {sections.map(({ days, deals }) => (
+                  <div key={days.join(",")} className="border-l-2 border-border pl-3">
+                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      {formatDayRange(days)}
+                    </h4>
+                    <ul className="space-y-3">
+                      {deals.map((deal) => (
+                        <DealItem key={deal.ids[0]} deal={deal} on={false} selection={selection} />
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </>
+      )}
     </div>
   );
 });
 
 export default VenueDetail;
 
-function DealItem({ deal, on, selection }: { deal: GroupedHappyHour; on: boolean; selection: SelectionLabel }) {
+function DealItem({
+  deal,
+  on,
+  selection,
+  days,
+}: {
+  deal: GroupedHappyHour;
+  on: boolean;
+  selection: SelectionLabel;
+  /** Show which days the deal runs on (for the Today list). */
+  days?: number[];
+}) {
   return (
     <li>
       <div className="flex items-center gap-1.5 text-sm font-medium">
         <Clock className={cn("h-3.5 w-3.5 flex-shrink-0", on ? "text-primary" : "text-muted-foreground")} aria-hidden="true" />
         <span className={cn("tabular-nums", on && "text-primary")}>{formatTimeRange(deal.start_time, deal.end_time)}</span>
         {on && <LiveBadge selection={selection} className="ml-1" />}
+        {days && (
+          <span className="ml-auto flex-shrink-0 pl-2 text-xs font-normal text-muted-foreground">
+            {days.length === 1 ? `${DAYS_LONG[days[0]]}s only` : formatDayRange(days)}
+          </span>
+        )}
       </div>
       <p className="mt-0.5 text-sm leading-snug">{deal.description}</p>
       {deal.tags && deal.tags.length > 0 && (

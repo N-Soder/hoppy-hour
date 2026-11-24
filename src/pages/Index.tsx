@@ -279,10 +279,16 @@ export default function Index() {
   }, [desktopDetail, url.venue]);
 
   // ── Filters ──────────────────────────────────────────────────────────
+  // Both fly the map to the new search centre, a move MapView doesn't report,
+  // so forget the last user-moved centre too.
   const handleLocationSearch = useCallback((coords: { lng: number; lat: number }) => {
     setSearchCenter(coords);
+    setMapCenter(null);
   }, []);
-  const handleRecenter = useCallback(() => setSearchCenter(null), []);
+  const handleRecenter = useCallback(() => {
+    setSearchCenter(null);
+    setMapCenter(null);
+  }, []);
   const showSearchArea = mapCenter && (Math.abs(mapCenter.lng - (queryLng ?? 0)) > 0.005 || Math.abs(mapCenter.lat - (queryLat ?? 0)) > 0.005);
   const handleSearchArea = () => {
     if (mapCenter) setSearchCenter(mapCenter);

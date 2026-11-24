@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   describeSelection,
+  endsLate,
   formatClock,
   formatDistance,
   formatTimeRange,
@@ -87,6 +88,22 @@ describe("formatTimeRange", () => {
 
   it("accepts picker minutes", () => {
     expect(formatTimeRange(1320, 1500)).toBe("10 pm–1 am");
+  });
+});
+
+describe("endsLate", () => {
+  it("is true only for a 23:59 end, in any stored form", () => {
+    expect(endsLate("23:59")).toBe(true);
+    expect(endsLate("23:59:00")).toBe(true);
+    expect(endsLate("23:59:59")).toBe(true);
+    expect(endsLate(1439)).toBe(true);
+    expect(endsLate("23:58")).toBe(false);
+    expect(endsLate("00:00")).toBe(false);
+  });
+
+  it("only 23:59 reads late; a minute earlier is a clock time", () => {
+    expect(formatTimeRange("22:00", "23:59")).toBe("10 pm–late");
+    expect(formatTimeRange("17:00", "23:58")).toBe("5–11:58 pm");
   });
 });
 

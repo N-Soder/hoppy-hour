@@ -43,6 +43,11 @@ interface MapViewProps {
   onSelectVenue: (id: string) => void;
   /** A click on the map itself (not a pin or cluster). */
   onBackgroundClick?: () => void;
+  /**
+   * The map centre after a move the user made (drag, zoom, the zoom buttons,
+   * tapping a cluster). Camera moves the app makes — flying to a location,
+   * panning a selected pin into view — are not reported.
+   */
   onBoundsChange: (bounds: { lng: number; lat: number }) => void;
   /** The user's real location. Leave null when it is unknown (fallback centre). */
   userLng?: number | null;
@@ -193,7 +198,8 @@ export default function MapView({
           const at = clustersRef.current.get(id)?.marker.getLngLat();
           source?.getClusterExpansionZoom(id, (err, zoom) => {
             if (err || zoom == null || !at) return;
-            map.easeTo({ center: at, zoom: zoom + 0.25, duration: panDuration() });
+            // Tagged so the move counts as the user's (see moveend below).
+            map.easeTo({ center: at, zoom: zoom + 0.25, duration: panDuration() }, { userInitiated: true });
           });
         });
         const pip = document.createElement("span");
@@ -347,7 +353,23 @@ export default function MapView({
     map.on("render", renderMarkers);
     map.addControl(new mapboxgl.AttributionControl({ compact: true }), "bottom-left");
     map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
-    map.on("moveend", () => {
+    // Only moves the user made count for "Search this area". Gesture and
+    // control moves carry the DOM event as `originalEvent` (inertia too);
+    // flyTo/easeTo/panBy from code carry none. A user gesture can interrupt a
+    // programmatic move, so remember it for the rest of that move.
+    let userMove = false;
+    const fromUser = (e: object) => {
+      const ev = e as { originalEvent?: unknown; userInitiated?: boolean };
+      return Boolean(ev.originalEvent || ev.userInitiated);
+    };
+    map.on("movestart", (e) => { userMove = fromUser(e); });
+    for (const type of ["dragstart", "zoomstart", "rotatestart", "pitchstart"] as const) {
+      map.on(type, (e) => { if (fromUser(e)) userMove = true; });
+    }
+    map.on("moveend", (e) => {
+      const byUser = userMove || fromUser(e);
+      userMove = false;
+      if (!byUser) return;
       const center = map.getCenter();
       onBoundsChange({ lng: center.lng, lat: center.lat });
     });
