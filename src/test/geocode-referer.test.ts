@@ -129,3 +129,92 @@ describe("geocode proxy robustness", () => {
   });
 });
 
+describe("geocode proxy worldwide place search (scope=world)", () => {
+  const ok = () =>
+    vi.fn(async () => ({ ok: true, json: async () => ({ features: [{ text: "Sofia" }] }) }) as unknown as Response);
+  const urlOf = (mock: ReturnType<typeof ok>) => new URL((mock.mock.calls[0] as unknown as [string])[0]);
+
+  it("sends no country filter, even with GEOCODE_COUNTRY set", async () => {
+    const fetchMock = ok();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await onRequestGet(ctx(
+      "https://hoppy-hour.pages.dev/api/geocode?q=Sofia&scope=world&proximity=115.86000,-31.95000",
+      makeEnv({ GEOCODE_COUNTRY: "AU" }),
+    ));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const url = urlOf(fetchMock);
+    expect(url.pathname).toBe("/geocoding/v5/mapbox.places/Sofia.json");
+    expect(url.searchParams.has("country")).toBe(false);
+    expect(url.searchParams.get("proximity")).toBe("115.86000,-31.95000");
+    expect(url.searchParams.get("limit")).toBe("5");
+  });
+
+  it("ignores a ?country= sent alongside scope=world", async () => {
+    const fetchMock = ok();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await onRequestGet(ctx(
+      "https://hoppy-hour.pages.dev/api/geocode?q=Sofia%2C%20Bulgaria&scope=world&country=AU",
+      makeEnv({ GEOCODE_COUNTRY: "AU" }),
+    ));
+
+    const url = urlOf(fetchMock);
+    expect(url.searchParams.has("country")).toBe(false);
+    expect(decodeURIComponent(url.pathname)).toContain("Sofia, Bulgaria");
+  });
+
+  it("drops a malformed proximity rather than passing it on", async () => {
+    const fetchMock = ok();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await onRequestGet(ctx(
+      "https://hoppy-hour.pages.dev/api/geocode?q=Sofia&scope=world&proximity=115.86,-31.95%26types%3Dpoi",
+      makeEnv(),
+    ));
+
+    const url = urlOf(fetchMock);
+    expect(url.searchParams.has("proximity")).toBe(false);
+    expect(url.searchParams.has("types")).toBe(false);
+  });
+
+  it("keeps the submit form's chosen-country filter without scope=world", async () => {
+    const fetchMock = ok();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await onRequestGet(ctx(
+      "https://hoppy-hour.pages.dev/api/geocode?q=Sof&types=place,locality&autocomplete=true&limit=8&country=BG",
+      makeEnv({ GEOCODE_COUNTRY: "AU" }),
+    ));
+
+    const url = urlOf(fetchMock);
+    expect(url.searchParams.get("country")).toBe("BG");
+    expect(url.searchParams.get("types")).toBe("place,locality");
+  });
+
+  it("is still rate limited", async () => {
+    const fetchMock = ok();
+    vi.stubGlobal("fetch", fetchMock);
+    const fullKV = { get: async () => "999", put: async () => {} } as unknown as KVNamespace;
+
+    const res = (await onRequestGet(ctx(
+      "https://hoppy-hour.pages.dev/api/geocode?q=Sofia&scope=world",
+      makeEnv({ RATE_LIMIT: fullKV }),
+    ))) as Response;
+
+    expect(res.status).toBe(429);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("still sends the Referer for the URL-restricted public token", async () => {
+    const fetchMock = ok();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await onRequestGet(ctx("https://hoppy-hour.pages.dev/api/geocode?q=Sofia&scope=world", makeEnv()));
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.headers).toMatchObject({ Referer: "https://hoppy-hour.pages.dev" });
+  });
+});
+

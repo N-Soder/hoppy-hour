@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_URL_STATE,
+  clearedFilters,
   countActiveFilters,
   parseDateParam,
   parseHomeParams,
@@ -10,6 +11,22 @@ import {
 } from "@/lib/url-state";
 
 const parse = (qs: string) => parseHomeParams(new URLSearchParams(qs));
+
+describe("clearedFilters", () => {
+  it("puts every filter back to its default, radius included, and cleans the URL", () => {
+    const params = new URLSearchParams("date=2026-11-28&time=17:30&radius=1000&tags=beer,wine&q=bar&utm_source=x");
+    const cleared = clearedFilters(parseHomeParams(params));
+    expect(cleared).toEqual(DEFAULT_URL_STATE);
+    expect(countActiveFilters(cleared)).toBe(0);
+    // Only the parameter the app does not own survives.
+    expect(toQueryString(serializeHomeParams(cleared, params))).toBe("utm_source=x");
+  });
+
+  it("keeps the open venue and the map tab, which are not filters", () => {
+    const cleared = clearedFilters(parse("venue=abc&radius=1000&view=map"));
+    expect(toQueryString(serializeHomeParams(cleared))).toBe("venue=abc&view=map");
+  });
+});
 
 describe("parseHomeParams", () => {
   it("gives the defaults for an empty query", () => {

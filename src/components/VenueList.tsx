@@ -193,6 +193,34 @@ export function VenueListSkeleton({ count = 4 }: { count?: number }) {
   );
 }
 
+/**
+ * Placeholder for one venue's detail while a shared link loads it: the same
+ * skeleton blocks as the list, shaped like the name, address and deals.
+ */
+export function VenueDetailSkeleton({ label = "Loading venue…" }: { label?: string }) {
+  return (
+    <div role="status" aria-live="polite" className="flex flex-col gap-3">
+      <span className="sr-only">{label}</span>
+      <div className="space-y-2" aria-hidden="true">
+        <Skeleton className="h-6 w-3/5" />
+        <Skeleton className="h-3.5 w-4/5" />
+        <Skeleton className="h-3.5 w-1/4" />
+      </div>
+      <div className="rounded-xl border border-border bg-card p-4" aria-hidden="true">
+        <div className="space-y-2">
+          <Skeleton className="h-3 w-1/3" />
+          <Skeleton className="h-3 w-4/5" />
+          <Skeleton className="h-3 w-3/5" />
+        </div>
+      </div>
+      <div className="flex gap-2" aria-hidden="true">
+        <Skeleton className="h-9 flex-1 rounded-md" />
+        <Skeleton className="h-9 flex-1 rounded-md" />
+      </div>
+    </div>
+  );
+}
+
 /** The venues request failed and there is nothing cached to show. */
 export function VenueListError({
   onRetry,

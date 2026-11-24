@@ -46,6 +46,9 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
+      // autoUpdate: the new worker skips waiting and claims open pages. The
+      // page itself is reloaded by src/lib/sw-update.ts (registered from
+      // main.tsx through virtual:pwa-register), only when that is safe.
       registerType: "autoUpdate",
       manifest: {
         id: "/",
@@ -113,7 +116,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": path.resolve(import.meta.dirname, "./src"),
     },
   },
 });

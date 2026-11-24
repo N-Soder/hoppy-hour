@@ -105,6 +105,22 @@ export function serializeHomeParams(state: HomeUrlState, keep?: URLSearchParams)
 
 const OWN_KEYS = new Set(["venue", "date", "time", "radius", "tags", "q", "view"]);
 
+/**
+ * Every filter back to its default (date and time to now, the default radius,
+ * no tags, no search), keeping the open venue and the list/map tab, which are
+ * not filters. Serialised, the filters leave the URL entirely.
+ */
+export function clearedFilters(state: HomeUrlState): HomeUrlState {
+  return {
+    ...state,
+    date: DEFAULT_URL_STATE.date,
+    time: DEFAULT_URL_STATE.time,
+    radius: DEFAULT_URL_STATE.radius,
+    tags: DEFAULT_URL_STATE.tags,
+    q: DEFAULT_URL_STATE.q,
+  };
+}
+
 /** Number of filters narrowing the list, for the collapsed header's badge. */
 export function countActiveFilters(state: HomeUrlState): number {
   return (
