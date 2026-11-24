@@ -15,6 +15,16 @@ export default {
       },
     },
     extend: {
+      screens: {
+        // `md:` is the desktop/tablet layout. It needs the width AND either
+        // some height or a fine pointer, so a phone turned sideways (~874×402,
+        // touch) keeps the phone layout instead of a two-column layout with
+        // ~150px of usable height. Must stay the exact complement of the query
+        // in src/hooks/use-mobile.tsx.
+        md: {
+          raw: "(min-width: 768px) and (min-height: 501px), (min-width: 768px) and (pointer: fine), (min-width: 768px) and (pointer: none)",
+        },
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",

@@ -13,7 +13,10 @@ import {
   SlidersHorizontal,
   X,
 } from "lucide-react";
-import { useIsMobile } from "@/hooks/use-mobile";
+import { useIsMobile, useIsShortTouch } from "@/hooks/use-mobile";
+import { useDocumentTitle } from "@/hooks/use-document-title";
+import { ConnectionNotice } from "@/components/ConnectionNotice";
+import { formatSavedTime, loadSavedVenues, saveVenues, selectVenueSource, type SavedVenues } from "@/lib/saved-venues";
 import { useMapboxToken } from "@/hooks/use-mapbox-token";
 import { useGeolocation } from "@/hooks/use-geolocation";
 import {
@@ -83,7 +86,30 @@ export default function Index() {
   const queryLat = searchCenter?.lat ?? lat;
   const venuesQuery = useVenuesWithinRadius(queryLng, queryLat, radius);
   const { isFetching: venuesFetching } = venuesQuery;
-  const venues = useMemo(() => venuesQuery.data ?? [], [venuesQuery.data]);
+
+  // The last list that loaded, kept on the device (lib/saved-venues): shown
+  // instead of the error or an endless spinner when offline or the server
+  // can't be reached.
+  const [saved, setSaved] = useState<SavedVenues | null>(() => loadSavedVenues());
+  useEffect(() => {
+    const data = venuesQuery.data;
+    if (data === undefined || queryLng === null || queryLat === null) return;
+    const entry = { lng: queryLng, lat: queryLat, radius, savedAt: venuesQuery.dataUpdatedAt, venues: data };
+    saveVenues(entry);
+    setSaved(entry);
+    // dataUpdatedAt changes on every successful fetch; the rest ride along.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [venuesQuery.dataUpdatedAt]);
+  const source = selectVenueSource({
+    live: venuesQuery.data,
+    online: isOnline,
+    error: venuesQuery.error ?? venuesQuery.failureReason,
+    saved,
+  });
+  const sourceVenues = source.kind === "none" ? undefined : source.venues;
+  const venues = useMemo(() => sourceVenues ?? [], [sourceVenues]);
+  const savedNote =
+    source.kind === "saved" ? `Showing saved results from ${formatSavedTime(source.savedAt)}.` : null;
 
   // A linked venue that isn't in the loaded list (outside the radius, or
   // someone else's location): fetch it on its own.
@@ -177,6 +203,8 @@ export default function Index() {
   }, [venues, liveVenueIds, searchQuery]);
 
   const detailVenue = venueInList ?? linkedVenue;
+  // The tab and history title: the open venue's name, else the default.
+  useDocumentTitle(detailVenue?.name);
   const venueOpen = !!url.venue;
   // The map always shows the open venue, even when the search hides it from
   // the list or it lies outside the radius.
@@ -319,8 +347,9 @@ export default function Index() {
   const listState = selectListState({
     locating,
     pending: venuesQuery.isPending,
-    isError: venuesQuery.isError,
-    hasData: venuesQuery.data !== undefined,
+    // Offline with nothing loaded or saved: the query is paused, not loading.
+    isError: venuesQuery.isError || (!isOnline && venuesQuery.fetchStatus === "paused"),
+    hasData: sourceVenues !== undefined,
     visibleCount: allVenuesWithHH.length,
   });
   const emptyCopy = describeEmptyState({
@@ -371,13 +400,23 @@ export default function Index() {
     if (!isMobile) setHeaderOffset(0);
   }, [isMobile]);
 
+  // A phone in landscape has ~400px of height: start with the header folded
+  // into the "Search and filters" strip so the list or map gets the room.
+  // Layout effect, so the first paint is already collapsed.
+  const isShortTouch = useIsShortTouch();
+  useLayoutEffect(() => {
+    if (!isMobile || !isShortTouch || !collapsibleRef.current) return;
+    isAnimatingRef.current = false;
+    setHeaderOffset(collapsibleRef.current.offsetHeight);
+  }, [isMobile, isShortTouch]);
+
   useEffect(() => {
-    if (mobileView === "list") {
+    if (mobileView === "list" && !isShortTouch) {
       isAnimatingRef.current = true;
       setHeaderOffset(0);
     }
     setFabHidden(false);
-  }, [mobileView]);
+  }, [mobileView, isShortTouch]);
 
   const handleListScroll = useCallback((e: React.UIEvent<HTMLElement>) => {
     const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
@@ -391,8 +430,10 @@ export default function Index() {
     if (delta > 4 && scrollTop > 48) setFabHidden(true);
     else if (delta < -4 || scrollTop <= 48) setFabHidden(false);
     isAnimatingRef.current = false;
-    setHeaderOffset((prev) => Math.max(0, Math.min(prev + delta * 2, collapsibleHeight)));
-  }, [isMobile, collapsibleHeight, desktopDetail]);
+    // Landscape: scrolling only folds the header away; the strip brings it back.
+    const step = isShortTouch ? Math.max(0, delta) : delta;
+    setHeaderOffset((prev) => Math.max(0, Math.min(prev + step * 2, collapsibleHeight)));
+  }, [isMobile, collapsibleHeight, desktopDetail, isShortTouch]);
 
   const expandHeader = useCallback(() => {
     isAnimatingRef.current = true;
@@ -411,13 +452,17 @@ export default function Index() {
   }, [expandHeader]);
 
   const headerCollapsed = isMobile && headerOffset > 10;
-  const dynamicPaddingTop = isMobile ? Math.max(MINI_STRIP_HEIGHT, collapsibleHeight - headerOffset) : 0;
+  // The strip sits below any top safe-area inset (0 with the default iOS
+  // status bar, but kept correct if that changes); the header pads itself.
+  const dynamicPaddingTop = isMobile
+    ? `max(calc(${MINI_STRIP_HEIGHT}px + env(safe-area-inset-top)), ${collapsibleHeight - headerOffset}px)`
+    : 0;
   const collapsibleStyle: React.CSSProperties = isMobile
     ? {
         position: "fixed",
         top: 0,
-        left: 0,
-        right: 0,
+        left: "env(safe-area-inset-left)",
+        right: "env(safe-area-inset-right)",
         zIndex: 40,
         transform: `translateY(-${headerOffset}px)`,
         transition: isAnimatingRef.current ? "transform 0.25s ease" : "none",
@@ -461,7 +506,16 @@ export default function Index() {
         {/* Collapsed strip (phones): says it expands the filters, shows how
             many are on, and offers a way back to the top of the list. */}
         {headerCollapsed && (
-          <div className="fixed top-0 left-0 right-0 z-50 flex h-11 items-stretch border-b border-border bg-card">
+          <div
+            className="fixed z-50 flex items-stretch border-b border-border bg-card"
+            style={{
+              top: 0,
+              left: "env(safe-area-inset-left)",
+              right: "env(safe-area-inset-right)",
+              paddingTop: "env(safe-area-inset-top)",
+              height: `calc(${MINI_STRIP_HEIGHT}px + env(safe-area-inset-top))`,
+            }}
+          >
             <button
               type="button"
               className="flex flex-1 items-center gap-2 px-4 text-sm font-medium select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
@@ -478,7 +532,10 @@ export default function Index() {
               )}
               <ChevronDown className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
             </button>
-            {mobileView === "list" ? (
+            {/* Landscape: the header starts folded, so the list/map switch
+                lives in the strip too. */}
+            {isShortTouch && <div className="flex items-center pr-1">{viewToggle}</div>}
+            {isShortTouch && mobileView === "map" ? null : mobileView === "list" ? (
               <button
                 type="button"
                 onClick={scrollListToTop}
@@ -507,7 +564,7 @@ export default function Index() {
           className="bg-background"
           onTransitionEnd={() => { isAnimatingRef.current = false; }}
         >
-          <header className="flex items-center justify-between gap-2 border-b border-border bg-card px-4 py-1.5 md:px-6 md:py-3">
+          <header className="flex items-center justify-between gap-2 border-b border-border bg-card px-4 pb-1.5 pt-[calc(0.375rem+env(safe-area-inset-top))] md:px-6 md:pb-3 md:pt-[calc(0.75rem+env(safe-area-inset-top))]">
             <div className="flex min-w-0 items-center gap-2">
               <img src="/favicon.ico" alt="" className="h-7 w-7 md:h-8 md:w-8" />
               <h1 className="truncate text-base font-bold tracking-tight md:text-lg">HoppyHour</h1>
@@ -601,6 +658,12 @@ export default function Index() {
             )}
           >
             <h2 id="venues-heading" className="sr-only">Venues</h2>
+            {/* Offline / saved results: outside the scroller so it stays put. */}
+            <ConnectionNotice
+              className={cn("px-3 pt-2", desktopDetail && "hidden")}
+              detail={savedNote ?? (venuesQuery.data !== undefined ? "Showing venues already loaded." : undefined)}
+              extra={isOnline ? savedNote : null}
+            />
             <div
               ref={listScrollRef as React.RefObject<HTMLDivElement>}
               className={cn("min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-3", isMobile && "pt-2 pb-28", desktopDetail && "hidden")}
@@ -623,9 +686,11 @@ export default function Index() {
                 />
               ) : (
                 <>
-                  {venuesQuery.isError && !venuesFetching && (
+                  {isOnline && venuesQuery.isError && !venuesFetching && (
                     <div role="alert" className="flex items-center gap-2 px-1 pb-2 text-xs text-muted-foreground">
-                      <span className="flex-1">{isOnline ? "Couldn't refresh venues." : "You're offline. Showing venues already loaded."}</span>
+                      <span className="flex-1">
+                        {source.kind === "saved" ? "Couldn't reach HoppyHour." : "Couldn't refresh venues."}
+                      </span>
                       <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => { void venuesQuery.refetch(); }}>
                         Retry
                       </Button>
@@ -706,6 +771,12 @@ export default function Index() {
                 onRetry={() => { void tokenQuery.refetch(); }}
                 retrying={tokenQuery.isFetching}
               />
+            ) : !token && !isOnline ? (
+              <MapMessage
+                kind="offline"
+                title="You're offline"
+                detail="The map will load when your connection is back."
+              />
             ) : !token || queryLng === null || queryLat === null ? (
               <MapMessage kind="loading" title="Loading map…" />
             ) : (
@@ -749,10 +820,13 @@ export default function Index() {
             asChild
             size="icon"
             className={cn(
-              "fixed right-4 z-30 h-14 w-14 rounded-full shadow-lg shadow-primary/35 transition-transform duration-200",
+              "fixed z-30 h-14 w-14 rounded-full shadow-lg shadow-primary/35 transition-transform duration-200",
               fabHidden && "pointer-events-none translate-y-32",
             )}
-            style={{ bottom: "max(1.5rem, calc(env(safe-area-inset-bottom) + 1rem))" }}
+            style={{
+              bottom: "max(1.5rem, calc(env(safe-area-inset-bottom) + 1rem))",
+              right: "calc(env(safe-area-inset-right) + 1rem)",
+            }}
           >
             <Link to="/submit" aria-label="Submit a deal" aria-hidden={fabHidden || undefined} tabIndex={fabHidden ? -1 : undefined}>
               <Plus className="h-6 w-6" aria-hidden="true" />
