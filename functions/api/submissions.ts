@@ -19,7 +19,22 @@ import { MAX_DEALS_PER_SUBMISSION, type SubmissionInput } from "../../src/lib/ap
 
 const SUBMIT_LIMIT_PER_MIN = 3;
 
-async function verifyTurnstile(secret: string, token: string, ip: string): Promise<boolean> {
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/**
+ * Server-side Turnstile check. Besides `success`, the token must have been
+ * solved on the host this request arrived at, so a token minted on another
+ * site that embeds our sitekey can't be replayed here. Loopback hosts skip the
+ * hostname match: Cloudflare's test keys report a placeholder hostname.
+ * Failures are logged (Pages real-time logs) so a rotated or broken secret
+ * shows up as `turnstile siteverify failed` instead of a silently dead form.
+ */
+export async function verifyTurnstile(
+  secret: string,
+  token: string,
+  ip: string,
+  expectedHost: string,
+): Promise<boolean> {
   const form = new FormData();
   form.set("secret", secret);
   form.set("response", token);
@@ -29,9 +44,18 @@ async function verifyTurnstile(secret: string, token: string, ip: string): Promi
       method: "POST",
       body: form,
     });
-    const data = await res.json<{ success?: boolean }>();
-    return data.success === true;
-  } catch {
+    const data = await res.json<{ success?: boolean; hostname?: string; "error-codes"?: string[] }>();
+    if (data.success !== true) {
+      console.warn("turnstile siteverify failed", data["error-codes"] ?? []);
+      return false;
+    }
+    if (!LOOPBACK_HOSTS.has(expectedHost) && data.hostname !== expectedHost) {
+      console.warn("turnstile hostname mismatch", { got: data.hostname, expected: expectedHost });
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error("turnstile siteverify unreachable", err);
     return false;
   }
 }
@@ -53,7 +77,9 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   }
 
   // 3. Turnstile.
-  if (!(await verifyTurnstile(env.TURNSTILE_SECRET_KEY, body.turnstile_token ?? "", ip))) {
+  if (!(await verifyTurnstile(
+    env.TURNSTILE_SECRET_KEY, body.turnstile_token ?? "", ip, new URL(request.url).hostname,
+  ))) {
     return error("turnstile_failed", 403);
   }
 
@@ -62,7 +88,11 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   if (!isStringLen(body.city, 200)) return error("city is required (max 200)", 400);
   if (!isCountryCode(body.country)) return error("country must be a 2-letter ISO code", 400);
   if (!isOptionalStringLen(body.venue_address, 500)) return error("venue_address must be at most 500 chars", 400);
-  if (!isLatLng(body.lat, body.lng)) return error("lat and lng are required", 400);
+  // Coordinates come from the city lookup. They may be absent when the lookup
+  // found no match and the submitter used their typed city; the moderator
+  // places the venue during review. If either is sent, both must be valid.
+  const hasCoords = body.lat != null || body.lng != null;
+  if (hasCoords && !isLatLng(body.lat, body.lng)) return error("lat and lng must both be valid coordinates", 400);
   const fieldErr = validateDealFields(body);
   if (fieldErr) return error(fieldErr, 400);
   const extrasErr = validateExtraDeals(body.extra_deals, MAX_DEALS_PER_SUBMISSION);
@@ -88,8 +118,8 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     body.venue_address && body.venue_address.trim() ? body.venue_address.trim() : "",
     body.city,
     body.country.toUpperCase(),
-    body.lat,
-    body.lng,
+    hasCoords ? body.lat : null,
+    hasCoords ? body.lng : null,
     JSON.stringify(body.days_of_week),
     toHms(body.start_time),
     toHms(body.end_time),

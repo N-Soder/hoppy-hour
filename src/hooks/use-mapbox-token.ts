@@ -10,5 +10,7 @@ export function useMapboxToken() {
     },
     staleTime: 1000 * 60 * 60, // cache for 1 hour
     retry: 2,
+    // The service worker caches the token, so let the first try reach it offline.
+    networkMode: "offlineFirst",
   });
 }

@@ -1,0 +1,24 @@
+-- Migration 0005 — each venue's IANA time zone.
+--
+-- Deal times are wall-clock times at the venue, so "live now" has to be worked
+-- out in the venue's zone, not the viewer's. The Functions fill this column
+-- from the venue's coordinates (functions/_shared/timezone.ts) whenever a venue
+-- is created, approved from a submission, or has its coordinates changed.
+-- NULL means "not known yet": the client then falls back to the viewer's zone,
+-- which is how the app behaved before this column existed.
+--
+-- Additive, nullable, no rebuild: safe on a live database. The code reads and
+-- writes this column only when it exists, so deploying before or after this
+-- migration both work.
+--
+-- Apply (see db/migrations/README.md for the full order):
+--   npx wrangler d1 execute hoppy-hour-db --local  --file=./db/migrations/0005_venue_timezone.sql
+--   npx wrangler d1 execute hoppy-hour-db --remote --file=./db/migrations/0005_venue_timezone.sql
+--
+-- Then fill existing venues (safe to run more than once):
+--   node scripts/backfill-timezones.mjs --local    (or --remote)
+--
+-- D1 dashboard console: paste the one statement below. If it errors with
+-- "duplicate column name", the column already exists — nothing to do.
+
+ALTER TABLE venues ADD COLUMN timezone TEXT;

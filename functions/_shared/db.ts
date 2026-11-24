@@ -10,7 +10,11 @@ export interface Env {
   SUBMISSION_IMAGES: R2Bucket;
   // Secret (dashboard / .dev.vars): key for the vision-extraction model calls.
   ANTHROPIC_API_KEY: string;
+  // Public pk. token handed to the browser for GL JS (URL-restricted).
   MAPBOX_ACCESS_TOKEN: string;
+  // Optional secret: a separate, server-only token for /api/geocode. When set,
+  // geocoding never uses the public token or a spoofed Referer.
+  MAPBOX_GEOCODE_TOKEN?: string;
   GEOCODE_COUNTRY?: string;
   // Optional Referer to send with server-side Mapbox calls, for URL-restricted
   // tokens. Defaults to the request's own origin (see functions/api/geocode.ts).
@@ -64,6 +68,8 @@ export function rowToVenue(r: Record<string, unknown>): Venue {
     lat: (r.lat as number | null) ?? null,
     lng: (r.lng as number | null) ?? null,
     status: r.status as Venue["status"],
+    // Column from migration 0005; null for rows read before it ran.
+    timezone: (r.timezone as string | null | undefined) ?? null,
   };
 }
 
@@ -89,5 +95,9 @@ export function rowToSubmission(r: Record<string, unknown>): Submission {
     image_key: (r.image_key as string | null) ?? null,
     venue_id: (r.venue_id as string | null) ?? null,
     created_at: r.created_at as string,
+    // Columns from migration 0006; null for undecided rows, rows decided
+    // before it ran, and databases it hasn't reached.
+    reviewed_by: (r.reviewed_by as string | null | undefined) ?? null,
+    reviewed_at: (r.reviewed_at as string | null | undefined) ?? null,
   };
 }

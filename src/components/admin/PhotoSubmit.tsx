@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, isAuthError } from "@/lib/api";
+import { api } from "@/lib/api";
+import { dealsOf, readableError } from "@/lib/admin";
+import { SubmissionDealList } from "./SubmissionDeals";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +14,6 @@ import { compressImage, blobToBase64 } from "@/lib/image-compress";
 import { CountryPicker } from "@/components/submit/CountryPicker";
 import { CitySearch } from "@/components/submit/CitySearch";
 import type { CityResult } from "@/lib/city-search";
-import { DAYS_SHORT } from "@/lib/constants";
 import type { Submission, FromImageInput } from "@/lib/api-types";
 
 /**
@@ -105,9 +106,7 @@ export default function PhotoSubmit({ onReview }: { onReview?: () => void }) {
     onError: (err: Error) => {
       toast({
         title: "Upload failed",
-        description: isAuthError(err)
-          ? "Your admin session expired — reload the page to sign in again."
-          : err.message,
+        description: readableError(err),
         variant: "destructive",
       });
     },
@@ -121,23 +120,12 @@ export default function PhotoSubmit({ onReview }: { onReview?: () => void }) {
     setVenueName("");
   };
 
-  const dealsOf = (sub: Submission) => [
-    {
-      days_of_week: sub.days_of_week,
-      start_time: sub.start_time,
-      end_time: sub.end_time,
-      description: sub.description,
-      tags: sub.tags,
-    },
-    ...(sub.extra_deals ?? []),
-  ];
-
   return (
     <div className="max-w-xl space-y-4">
       <Card>
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
-            <Camera className="h-4 w-4" /> Snap a Deal
+            <Camera className="h-4 w-4" aria-hidden="true" /> Snap a deal
           </CardTitle>
           <CardDescription>
             Photograph a happy hour menu, chalkboard, or screenshot. A vision model pre-fills a
@@ -166,6 +154,7 @@ export default function PhotoSubmit({ onReview }: { onReview?: () => void }) {
                 variant="secondary"
                 className="absolute top-2 right-2 h-7 w-7"
                 onClick={() => pickFile(null)}
+                aria-label="Remove the selected photo"
               >
                 <X className="h-4 w-4" />
               </Button>
@@ -265,24 +254,12 @@ export default function PhotoSubmit({ onReview }: { onReview?: () => void }) {
             <CardDescription>{result.submission.venue_name}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="divide-y divide-dashed divide-border">
-              {dealsOf(result.submission).map((deal, i) => (
-                <div key={i} className="space-y-1.5 py-2 first:pt-0 last:pb-0">
-                  <p className="text-sm">{deal.description || <em className="text-muted-foreground">No description read — check the photo in review</em>}</p>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {deal.days_of_week.map((d) => (
-                      <Badge key={d} variant="secondary" className="text-xs">{DAYS_SHORT[d]}</Badge>
-                    ))}
-                    <span className="text-xs text-muted-foreground ml-1">
-                      {deal.start_time.slice(0, 5)} – {deal.end_time.slice(0, 5)}
-                    </span>
-                    {deal.tags?.map((t) => (
-                      <Badge key={t} variant="outline" className="text-xs capitalize">{t}</Badge>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <SubmissionDealList
+              deals={dealsOf(result.submission).map((d) => ({
+                ...d,
+                description: d.description || "No description read. Check the photo in review.",
+              }))}
+            />
             {result.notes && (
               <p className="text-xs rounded-md bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 p-2">
                 Model notes: {result.notes}

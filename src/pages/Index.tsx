@@ -1,95 +1,195 @@
 import { useState, useMemo, useCallback, useRef, useEffect, useLayoutEffect } from "react";
-import { useIsMobile } from "@/hooks/use-mobile";
+import { Link } from "react-router-dom";
+import {
+  ArrowLeft,
+  ArrowUp,
+  ChevronDown,
+  List,
+  Loader2,
+  LocateOff,
+  Map as MapIcon,
+  Plus,
+  RefreshCw,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
+import { useIsMobile, useIsShortTouch } from "@/hooks/use-mobile";
+import { useDocumentTitle } from "@/hooks/use-document-title";
+import { ConnectionNotice } from "@/components/ConnectionNotice";
+import { formatSavedTime, loadSavedVenues, saveVenues, selectVenueSource, type SavedVenues } from "@/lib/saved-venues";
 import { useMapboxToken } from "@/hooks/use-mapbox-token";
 import { useGeolocation } from "@/hooks/use-geolocation";
-import { useVenuesWithinRadius, filterByDayAndTime, filterByTags, type VenueWithHappyHours } from "@/hooks/use-venues";
+import {
+  useVenue,
+  useVenuesWithinRadius,
+  filterByTags,
+  type VenueWithHappyHours,
+} from "@/hooks/use-venues";
+import { useOnlineStatus } from "@/hooks/use-online-status";
+import { useHomeUrlState } from "@/hooks/use-home-url-state";
+import { useToast } from "@/hooks/use-toast";
 import MapView from "@/components/MapView";
+import { MapMessage } from "@/components/MapMessage";
 import FiltersPanel from "@/components/FiltersPanel";
-import VenueList from "@/components/VenueList";
-import VenueDetailModal from "@/components/VenueDetailModal";
-import VenueBottomSheet from "@/components/VenueBottomSheet";
+import VenueList, { VenueListEmpty, VenueListError, VenueListSkeleton } from "@/components/VenueList";
+import VenueDetail, { ScrollCue } from "@/components/VenueDetail";
+import { venueStatus } from "@/lib/venue-status";
+import VenueSheet, { type SheetMode } from "@/components/VenueSheet";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { MapPin, RefreshCw, Plus, LocateOff, ChevronDown, Loader2 } from "lucide-react";
 import OptionsMenu from "@/components/OptionsMenu";
-import { Link } from "react-router-dom";
 import { DEFAULT_LOCATION_NAME } from "@/lib/constants";
 import { roundTo15 } from "@/lib/time";
+import { describeSelection, plural } from "@/lib/format";
+import { geoBanner, geoChip, hasRealLocation, isLocating } from "@/lib/geo-status";
+import { describeEmptyState, selectListState } from "@/lib/list-state";
+import { MAX_RADIUS, RADIUS_OPTIONS, formatDistanceRadius } from "@/lib/radius";
+import { countActiveFilters, fromDateParam, toDateParam } from "@/lib/url-state";
+import { areaTimeZone, dealsOnAt, nextDealLabel, selectionInstant, venueClock } from "@/lib/venue-time";
+import { sameClock, viewerTimeZone, wallClockAsLocalDate, wallClockAt, zoneLabel } from "@/lib/zoned-time";
+import { scrollBehavior } from "@/lib/motion";
+import { cn } from "@/lib/utils";
 
-const MINI_STRIP_HEIGHT = 36;
+// Height of the collapsed header strip on phones: a full 44px tap target.
+const MINI_STRIP_HEIGHT = 44;
+
+function sameDay(a: Date, b: Date): boolean {
+  return a.toDateString() === b.toDateString();
+}
+
+/** Where a venue was opened from, so focus can go back there on close. */
+type Opener = { kind: "card" | "pin"; id: string };
 
 export default function Index() {
   const isMobile = useIsMobile();
-  const [mobileView, setMobileView] = useState<"list" | "map">("list");
+  const { toast } = useToast();
+  const { state: url, update: updateUrl, openVenue, closeVenue } = useHomeUrlState();
+  const mobileView = url.view;
   const {
     lng,
     lat,
     status: geoStatus,
+    userInitiated: geoUserInitiated,
     requestLocation,
   } = useGeolocation();
-  const {
-    data: token,
-    isLoading: tokenLoading
-  } = useMapboxToken();
+  const tokenQuery = useMapboxToken();
+  const token = tokenQuery.data;
+  const isOnline = useOnlineStatus();
 
-  // Filter state
-  const [date, setDate] = useState(new Date());
-  const [time, setTime] = useState(roundTo15(new Date()));
-  const [radius, setRadius] = useState(5000);
-  // Fix #5: track whether the user has manually set the time (stops auto-advance)
-  const isTimeManual = useRef(false);
-  // Fix B5: track whether the user has manually picked a date (stops auto-rollover)
-  const isDateManual = useRef(false);
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [selectedVenueId, setSelectedVenueId] = useState<string | null>(null);
-  const [detailVenueId, setDetailVenueId] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
+  const radius = url.radius;
+  const selectedTags = url.tags;
+  const searchQuery = url.q;
 
-  // Map center for "search this area"
-  const [mapCenter, setMapCenter] = useState<{
-    lng: number;
-    lat: number;
-  } | null>(null);
-  const [searchCenter, setSearchCenter] = useState<{
-    lng: number;
-    lat: number;
-  } | null>(null);
+  // Map center for "search this area" (not in the URL: it is a map gesture).
+  const [mapCenter, setMapCenter] = useState<{ lng: number; lat: number } | null>(null);
+  const [searchCenter, setSearchCenter] = useState<{ lng: number; lat: number } | null>(null);
   const queryLng = searchCenter?.lng ?? lng;
   const queryLat = searchCenter?.lat ?? lat;
-  const {
-    data: venues = [],
-    isLoading: venuesLoading,
-    isFetching: venuesFetching,
-  } = useVenuesWithinRadius(queryLng, queryLat, radius);
-  // Happy hours now arrive embedded on each venue (one /api/venues round trip);
-  // flatten them for the day/time/tag filters below.
-  const happyHours = useMemo(() => venues.flatMap((v) => v.happy_hours), [venues]);
+  const venuesQuery = useVenuesWithinRadius(queryLng, queryLat, radius);
+  const { isFetching: venuesFetching } = venuesQuery;
 
-  // Apply filters
-  const dayOfWeek = date.getDay();
-  const timeStr = time + ":00";
-  const filteredHH = useMemo(() => {
-    let hh = filterByDayAndTime(happyHours, dayOfWeek, timeStr);
-    hh = filterByTags(hh, selectedTags);
-    return hh;
-  }, [happyHours, dayOfWeek, timeStr, selectedTags]);
+  // The last list that loaded, kept on the device (lib/saved-venues): shown
+  // instead of the error or an endless spinner when offline or the server
+  // can't be reached.
+  const [saved, setSaved] = useState<SavedVenues | null>(() => loadSavedVenues());
+  useEffect(() => {
+    const data = venuesQuery.data;
+    if (data === undefined || queryLng === null || queryLat === null) return;
+    const entry = { lng: queryLng, lat: queryLat, radius, savedAt: venuesQuery.dataUpdatedAt, venues: data };
+    saveVenues(entry);
+    setSaved(entry);
+    // dataUpdatedAt changes on every successful fetch; the rest ride along.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [venuesQuery.dataUpdatedAt]);
+  const source = selectVenueSource({
+    live: venuesQuery.data,
+    online: isOnline,
+    error: venuesQuery.error ?? venuesQuery.failureReason,
+    saved,
+  });
+  const sourceVenues = source.kind === "none" ? undefined : source.venues;
+  const venues = useMemo(() => sourceVenues ?? [], [sourceVenues]);
+  const savedNote =
+    source.kind === "saved" ? `Showing saved results from ${formatSavedTime(source.savedAt)}.` : null;
+
+  // A linked venue that isn't in the loaded list (outside the radius, or
+  // someone else's location): fetch it on its own.
+  const venueInList = url.venue ? venues.find((v) => v.id === url.venue) ?? null : null;
+  const linkedQuery = useVenue(
+    url.venue,
+    queryLng,
+    queryLat,
+    !!url.venue && venuesQuery.data !== undefined && !venueInList,
+  );
+  const linkedVenue = !venueInList ? linkedQuery.data ?? null : null;
+  const venuesAll = useMemo(
+    () => (linkedVenue ? [...venues, linkedVenue] : venues),
+    [venues, linkedVenue],
+  );
+  // ── When: the date/time filter and each venue's clock ────────────────
+  // The filter is in the time zone of the area being searched (see
+  // lib/venue-time); each venue is then checked on its own wall clock.
+  const viewerZone = useMemo(() => viewerTimeZone(), []);
+  const areaZone = useMemo(
+    () => areaTimeZone(venues.length > 0 ? venues : linkedVenue ? [linkedVenue] : [], viewerZone),
+    [venues, linkedVenue, viewerZone],
+  );
+
+  // Wall clock, refreshed every minute. With no date/time in the URL the
+  // filter is "now" in the area's zone and follows it (including across
+  // midnight). areaNow is a local Date whose getters read the area's clock.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  const areaNow = useMemo(() => wallClockAsLocalDate(wallClockAt(now, areaZone)), [now, areaZone]);
+  const todayKey = areaNow.toDateString();
+  const date = useMemo(
+    () => (url.date ? fromDateParam(url.date) : new Date(todayKey)),
+    [url.date, todayKey],
+  );
+  const time = url.time ?? roundTo15(areaNow);
+  const selectedAt = useMemo(() => selectionInstant(date, time, areaZone), [date, time, areaZone]);
+  const nowMs = now.getTime();
+  const venueClocks = useMemo(
+    () => new Map(venuesAll.map((v) => [v.id, venueClock(v.timezone, viewerZone, selectedAt, nowMs)])),
+    [venuesAll, viewerZone, selectedAt, nowMs],
+  );
+  const zoneNotes = useMemo(
+    () => new Map([...venueClocks].map(([id, c]) => [id, c.zoneNote])),
+    [venueClocks],
+  );
+  const filterZoneNote = sameClock(areaZone, viewerZone, selectedAt) ? null : zoneLabel(areaZone);
+
+  // Apply filters: tags, then what is on at each venue's own clock.
+  const tagFilteredByVenue = useMemo(
+    () => new Map(venuesAll.map((v) => [v.id, filterByTags(v.happy_hours, selectedTags)])),
+    [venuesAll, selectedTags],
+  );
+  const filteredHH = useMemo(
+    () => venuesAll.flatMap((v) => dealsOnAt(tagFilteredByVenue.get(v.id) ?? [], venueClocks.get(v.id)!)),
+    [venuesAll, tagFilteredByVenue, venueClocks],
+  );
   const filteredHHIds = useMemo(() => new Set(filteredHH.map((h) => h.id)), [filteredHH]);
-  const liveVenueIds = useMemo(() => {
-    const ids = new Set<string>();
-    filteredHH.forEach((hh) => ids.add(hh.venue_id));
-    return ids;
-  }, [filteredHH]);
   const liveVenueCounts = useMemo(() => {
     const counts = new Map<string, number>();
-    filteredHH.forEach((hh) => {
-      counts.set(hh.venue_id, (counts.get(hh.venue_id) ?? 0) + 1);
-    });
+    filteredHH.forEach((hh) => counts.set(hh.venue_id, (counts.get(hh.venue_id) ?? 0) + 1));
     return counts;
   }, [filteredHH]);
+  const liveVenueIds = useMemo(() => new Set(liveVenueCounts.keys()), [liveVenueCounts]);
 
-  // Build ALL venues with their hoppy hours, apply name/address search filter
-  // Venues already carry their happy_hours; just apply the name/address search
-  // filter and sort (live venues first, then by distance).
+  // Next deal for every venue with nothing on at the selection, on its clock.
+  const nextDealLabels = useMemo(() => {
+    const labels = new Map<string, string>();
+    tagFilteredByVenue.forEach((deals, venueId) => {
+      if (liveVenueIds.has(venueId)) return;
+      const label = nextDealLabel(deals, venueClocks.get(venueId)!);
+      if (label) labels.set(venueId, label);
+    });
+    return labels;
+  }, [tagFilteredByVenue, liveVenueIds, venueClocks]);
+
+  // Name/address search, then live venues first, then by distance.
   const allVenuesWithHH: VenueWithHappyHours[] = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return venues
@@ -101,278 +201,657 @@ export default function Index() {
         return a.distance_meters - b.distance_meters;
       });
   }, [venues, liveVenueIds, searchQuery]);
-  const handleSelectVenue = useCallback((id: string | null) => {
-    setSelectedVenueId(id);
-  }, []);
-  const handleOpenDetail = useCallback((id: string) => {
-    setSelectedVenueId(id);
-    setDetailVenueId(id);
-  }, []);
-  const handleLocationSearch = useCallback((coords: {
-    lng: number;
-    lat: number;
-  }) => {
+
+  const detailVenue = venueInList ?? linkedVenue;
+  // The tab and history title: the open venue's name, else the default.
+  useDocumentTitle(detailVenue?.name);
+  const venueOpen = !!url.venue;
+  // The map always shows the open venue, even when the search hides it from
+  // the list or it lies outside the radius.
+  const mapVenues = useMemo(
+    () =>
+      detailVenue && !allVenuesWithHH.some((v) => v.id === detailVenue.id)
+        ? [...allVenuesWithHH, detailVenue]
+        : allVenuesWithHH,
+    [allVenuesWithHH, detailVenue],
+  );
+
+  // A link to a venue that no longer exists: say so and drop it from the URL.
+  useEffect(() => {
+    if (url.venue && !venueInList && linkedQuery.isSuccess && linkedQuery.data === null) {
+      toast({ title: "Venue not found", description: "That venue isn't listed any more." });
+      closeVenue();
+    }
+  }, [url.venue, venueInList, linkedQuery.isSuccess, linkedQuery.data, toast, closeVenue]);
+
+  // ── Opening and closing the detail ────────────────────────────────────
+  const [sheetMode, setSheetMode] = useState<SheetMode>(() => (url.view === "map" ? "compact" : "expanded"));
+  const [sheetHeight, setSheetHeight] = useState(0);
+  const openerRef = useRef<Opener | null>(null);
+
+  const openFromList = useCallback(
+    (id: string) => {
+      openerRef.current = { kind: "card", id };
+      setSheetMode("expanded");
+      openVenue(id);
+    },
+    [openVenue],
+  );
+  const openFromMap = useCallback(
+    (id: string) => {
+      openerRef.current = { kind: "pin", id };
+      setSheetMode("compact");
+      openVenue(id);
+    },
+    [openVenue],
+  );
+  const handleMapBackgroundClick = useCallback(() => {
+    if (isMobile && venueOpen && sheetMode === "compact") closeVenue();
+  }, [isMobile, venueOpen, sheetMode, closeVenue]);
+
+  // Focus: the detail's heading when it opens (desktop panel; the sheet
+  // focuses its own), and back to the card or pin that opened it on close.
+  const panelHeadingRef = useRef<HTMLHeadingElement>(null);
+  const prevVenueRef = useRef(url.venue);
+  useEffect(() => {
+    const prev = prevVenueRef.current;
+    prevVenueRef.current = url.venue;
+    if (url.venue && !isMobile) {
+      requestAnimationFrame(() => panelHeadingRef.current?.focus({ preventScroll: true }));
+    }
+    if (prev && !url.venue) {
+      const opener = openerRef.current;
+      openerRef.current = null;
+      requestAnimationFrame(() => {
+        const card = document.querySelector<HTMLElement>(`[data-venue-card="${prev}"]`);
+        const pin = document.querySelector<HTMLElement>(`[data-venue-pin="${prev}"]`);
+        const target = opener?.kind === "pin" ? pin ?? card : card ?? pin;
+        target?.focus({ preventScroll: opener?.kind === "pin" });
+      });
+    }
+  }, [url.venue, isMobile, detailVenue]);
+
+  // Esc closes the detail (unless a popover or menu is taking it).
+  useEffect(() => {
+    if (!venueOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (document.querySelector("[data-radix-popper-content-wrapper], [role='dialog']:not([data-venue-sheet])")) return;
+      closeVenue();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [venueOpen, closeVenue]);
+
+  // The expanded phone sheet is modal: everything behind it is inert.
+  const pageRef = useRef<HTMLDivElement>(null);
+  const sheetModal = isMobile && venueOpen && sheetMode === "expanded";
+  useEffect(() => {
+    const el = pageRef.current;
+    if (!el) return;
+    el.inert = sheetModal;
+    return () => {
+      el.inert = false;
+    };
+  }, [sheetModal]);
+
+  // Desktop: the detail replaces the list column; keep the list's scroll
+  // position for when it comes back.
+  const listScrollRef = useRef<HTMLElement>(null);
+  const savedListScroll = useRef(0);
+  const panelScrollRef = useRef<HTMLDivElement>(null);
+  const desktopDetail = !isMobile && venueOpen;
+  useLayoutEffect(() => {
+    if (!desktopDetail && listScrollRef.current) listScrollRef.current.scrollTop = savedListScroll.current;
+    if (desktopDetail) panelScrollRef.current?.scrollTo({ top: 0 });
+  }, [desktopDetail, url.venue]);
+
+  // ── Filters ──────────────────────────────────────────────────────────
+  // Both fly the map to the new search centre, a move MapView doesn't report,
+  // so forget the last user-moved centre too.
+  const handleLocationSearch = useCallback((coords: { lng: number; lat: number }) => {
     setSearchCenter(coords);
+    setMapCenter(null);
   }, []);
   const handleRecenter = useCallback(() => {
     setSearchCenter(null);
+    setMapCenter(null);
   }, []);
-  const detailVenue = allVenuesWithHH.find((v) => v.id === detailVenueId) ?? null;
-  const selectedVenue = allVenuesWithHH.find((v) => v.id === selectedVenueId) ?? null;
   const showSearchArea = mapCenter && (Math.abs(mapCenter.lng - (queryLng ?? 0)) > 0.005 || Math.abs(mapCenter.lat - (queryLat ?? 0)) > 0.005);
   const handleSearchArea = () => {
     if (mapCenter) setSearchCenter(mapCenter);
   };
-  // Bug #3: also gate on coords being non-null (possible when geoStatus is "denied"
-  // but DEFAULT_LNG/LAT env vars are not set, or during the brief requesting window)
-  const isLoading = tokenLoading || geoStatus === "requesting" || queryLng === null || queryLat === null;
+  const selection = useMemo(() => describeSelection(date, time, areaNow), [date, time, areaNow]);
 
-  // --- Mobile scroll-linked header hide ---
+  const resetToNow = useCallback(() => {
+    setNow(new Date());
+    updateUrl({ date: null, time: null });
+  }, [updateUrl]);
+  const onDateChange = useCallback(
+    (d: Date) => updateUrl({ date: sameDay(d, areaNow) ? null : toDateParam(d) }),
+    [updateUrl, areaNow],
+  );
+  const onTimeChange = useCallback((t: string) => updateUrl({ time: t || null }), [updateUrl]);
+  const onRadiusChange = useCallback((r: number) => updateUrl({ radius: r }), [updateUrl]);
+  const onTagsChange = useCallback((tags: string[]) => updateUrl({ tags }), [updateUrl]);
+  const onSearchQueryChange = useCallback((q: string) => updateUrl({ q }), [updateUrl]);
+  const setMobileView = useCallback((view: "list" | "map") => updateUrl({ view }), [updateUrl]);
+  const clearFilters = useCallback(() => {
+    setNow(new Date());
+    updateUrl({ q: "", tags: [], date: null, time: null });
+  }, [updateUrl]);
+  const activeFilterCount = countActiveFilters(url);
+
+  // ── List state ───────────────────────────────────────────────────────
+  const locating = isLocating(geoStatus, queryLat !== null);
+  const listState = selectListState({
+    locating,
+    pending: venuesQuery.isPending,
+    // Offline with nothing loaded or saved: the query is paused, not loading.
+    isError: venuesQuery.isError || (!isOnline && venuesQuery.fetchStatus === "paused"),
+    hasData: sourceVenues !== undefined,
+    visibleCount: allVenuesWithHH.length,
+  });
+  const emptyCopy = describeEmptyState({
+    searchQuery,
+    tags: selectedTags,
+    whenPhrase: selection.isNow ? null : selection.phrase,
+    radiusMeters: radius,
+    venuesInRadius: venues.length,
+  });
+  const nextRadius = RADIUS_OPTIONS.find((r) => r > radius);
+  const radiusIsTheCause = venues.length === 0 && radius < MAX_RADIUS && nextRadius !== undefined;
+  const liveInList = allVenuesWithHH.filter((v) => liveVenueIds.has(v.id)).length;
+  const countLine = `${plural(allVenuesWithHH.length, "venue")} · ${liveInList} with deals on ${selection.phrase}`;
+
+  // ── Location notice ──────────────────────────────────────────────────
+  const banner =
+    geoStatus === "requesting" && geoUserInitiated
+      ? { message: "Finding your location…", action: null }
+      : geoBanner(geoStatus, DEFAULT_LOCATION_NAME, geoUserInitiated);
+  const chip =
+    geoStatus === "requesting" && geoUserInitiated
+      ? { label: "Finding your location…", action: null }
+      : geoChip(geoStatus, DEFAULT_LOCATION_NAME, geoUserInitiated);
+  const [noticeDismissed, setNoticeDismissed] = useState(false);
+  // A new problem (e.g. a retry that failed differently) shows the notice again.
+  useEffect(() => setNoticeDismissed(false), [geoStatus, geoUserInitiated]);
+  const realLocation = hasRealLocation(geoStatus);
+
+  // ── Phone: scroll-linked header hide, FAB hide ────────────────────────
   const collapsibleRef = useRef<HTMLDivElement>(null);
   const [collapsibleHeight, setCollapsibleHeight] = useState(0);
   const [headerOffset, setHeaderOffset] = useState(0);
   const lastScrollTopRef = useRef(0);
   const isAnimatingRef = useRef(false);
+  const [fabHidden, setFabHidden] = useState(false);
 
   useLayoutEffect(() => {
     if (!collapsibleRef.current || !isMobile) return;
-    // Measure immediately to avoid layout flash on first render
     setCollapsibleHeight(collapsibleRef.current.offsetHeight);
     const ro = new ResizeObserver(() => {
-      if (collapsibleRef.current) {
-        setCollapsibleHeight(collapsibleRef.current.offsetHeight);
-      }
+      if (collapsibleRef.current) setCollapsibleHeight(collapsibleRef.current.offsetHeight);
     });
     ro.observe(collapsibleRef.current);
     return () => ro.disconnect();
   }, [isMobile]);
 
-  // Reset when switching away from mobile
   useEffect(() => {
     if (!isMobile) setHeaderOffset(0);
   }, [isMobile]);
 
-  // Restore header when switching back to list view
+  // A phone in landscape has ~400px of height: start with the header folded
+  // into the "Search and filters" strip so the list or map gets the room.
+  // Layout effect, so the first paint is already collapsed.
+  const isShortTouch = useIsShortTouch();
+  useLayoutEffect(() => {
+    if (!isMobile || !isShortTouch || !collapsibleRef.current) return;
+    isAnimatingRef.current = false;
+    setHeaderOffset(collapsibleRef.current.offsetHeight);
+  }, [isMobile, isShortTouch]);
+
   useEffect(() => {
-    if (mobileView === "list") {
+    if (mobileView === "list" && !isShortTouch) {
       isAnimatingRef.current = true;
       setHeaderOffset(0);
     }
-  }, [mobileView]);
+    setFabHidden(false);
+  }, [mobileView, isShortTouch]);
 
-  // Fix #5: auto-advance time every 60s when the user hasn't manually changed it
-  useEffect(() => {
-    const id = setInterval(() => {
-      if (!isTimeManual.current) {
-        setTime(roundTo15(new Date()));
-      }
-      // Fix B5: roll `date` forward across midnight so we don't keep filtering
-      // with yesterday's weekday. Setting a new date triggers the dateString
-      // effect below, which re-syncs the time and resets isTimeManual — that
-      // cascade is intended. `date` is in the deps so the check never reads a
-      // stale closure; restarting the interval on a date change is harmless.
-      if (!isDateManual.current && date.toDateString() !== new Date().toDateString()) {
-        setDate(new Date());
-      }
-    }, 60_000);
-    return () => clearInterval(id);
-  }, [date]);
-
-  // Fix #5: when the date rolls over to a new day, reset manual flag so time re-syncs.
-  // Use the date string as a stable primitive dependency to avoid the complex-expression warning.
-  const dateString = date.toDateString();
-  useEffect(() => {
-    isTimeManual.current = false;
-    setTime(roundTo15(new Date()));
-  }, [dateString]);
-
-  const handleListScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    if (!isMobile || collapsibleHeight === 0) return;
+  const handleListScroll = useCallback((e: React.UIEvent<HTMLElement>) => {
     const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    if (!desktopDetail) savedListScroll.current = scrollTop;
+    if (!isMobile || collapsibleHeight === 0) return;
     const delta = scrollTop - lastScrollTopRef.current;
     lastScrollTopRef.current = scrollTop;
-    // Skip at the bottom boundary — Android overscroll fires scroll events here
+    // Skip at the bottom boundary: Android overscroll fires scroll events here
     // that would otherwise create a feedback loop with the header resize.
     if (scrollTop + clientHeight >= scrollHeight - 2) return;
+    if (delta > 4 && scrollTop > 48) setFabHidden(true);
+    else if (delta < -4 || scrollTop <= 48) setFabHidden(false);
     isAnimatingRef.current = false;
-    setHeaderOffset((prev) => Math.max(0, Math.min(prev + delta * 2, collapsibleHeight)));
-  }, [isMobile, collapsibleHeight]);
+    // Landscape: scrolling only folds the header away; the strip brings it back.
+    const step = isShortTouch ? Math.max(0, delta) : delta;
+    setHeaderOffset((prev) => Math.max(0, Math.min(prev + step * 2, collapsibleHeight)));
+  }, [isMobile, collapsibleHeight, desktopDetail, isShortTouch]);
 
   const expandHeader = useCallback(() => {
     isAnimatingRef.current = true;
     setHeaderOffset(0);
   }, []);
-
   const collapseHeader = useCallback(() => {
     isAnimatingRef.current = true;
     setHeaderOffset(collapsibleHeight);
   }, [collapsibleHeight]);
+  const scrollListToTop = useCallback(() => {
+    listScrollRef.current?.scrollTo({ top: 0, behavior: scrollBehavior() });
+    expandHeader();
+    // Keep keyboard focus somewhere sensible (the strip button disappears)
+    // without focusing the search field, which would raise the phone keyboard.
+    requestAnimationFrame(() => document.querySelector<HTMLElement>("[data-venue-card]")?.focus({ preventScroll: true }));
+  }, [expandHeader]);
 
+  const headerCollapsed = isMobile && headerOffset > 10;
+  // The strip sits below any top safe-area inset (0 with the default iOS
+  // status bar, but kept correct if that changes); the header pads itself.
   const dynamicPaddingTop = isMobile
-    ? Math.max(MINI_STRIP_HEIGHT, collapsibleHeight - headerOffset)
+    ? `max(calc(${MINI_STRIP_HEIGHT}px + env(safe-area-inset-top)), ${collapsibleHeight - headerOffset}px)`
     : 0;
+  const collapsibleStyle: React.CSSProperties = isMobile
+    ? {
+        position: "fixed",
+        top: 0,
+        left: "env(safe-area-inset-left)",
+        right: "env(safe-area-inset-right)",
+        zIndex: 40,
+        transform: `translateY(-${headerOffset}px)`,
+        transition: isAnimatingRef.current ? "transform 0.25s ease" : "none",
+        willChange: "transform",
+      }
+    : {};
 
-  const collapsibleStyle: React.CSSProperties = isMobile ? {
-    position: "fixed",
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 40,
-    transform: `translateY(-${headerOffset}px)`,
-    transition: isAnimatingRef.current ? "transform 0.25s ease" : "none",
-    willChange: "transform",
-  } : {};
+  const detailStatus = detailVenue ? venueStatus(detailVenue, liveVenueCounts, nextDealLabels) : null;
+  const detailClock = detailVenue ? venueClocks.get(detailVenue.id) ?? null : null;
+  const outsideRadiusNote =
+    detailVenue && !venueInList
+      ? `Outside your ${formatDistanceRadius(radius)} search area, so it isn't in the list. Distance is from ${realLocation && !searchCenter ? "you" : "the map's search centre"}.`
+      : null;
 
-  return <div className="flex flex-col h-dvh" style={{ paddingTop: dynamicPaddingTop }}>
-      {/* Mini strip — always-visible tap target when header is collapsed (mobile only) */}
-      {isMobile && headerOffset > 10 && (
-        <div
-          className="fixed top-0 left-0 right-0 z-50 h-9 bg-card border-b border-border flex items-center justify-center gap-1.5 cursor-pointer select-none"
-          onClick={expandHeader}
-        >
-          <img src="/favicon.ico" alt="HoppyHour" className="h-4 w-4" />
-          <ChevronDown className="h-3 w-3 text-muted-foreground" />
-        </div>
-      )}
+  const viewToggle = (
+    <div className="flex rounded-full bg-muted p-0.5" role="group" aria-label="View">
+      {(["list", "map"] as const).map((view) => {
+        const Icon = view === "list" ? List : MapIcon;
+        return (
+          <button
+            key={view}
+            type="button"
+            aria-pressed={mobileView === view}
+            onClick={() => setMobileView(view)}
+            className={cn(
+              "touch-target flex h-9 items-center gap-1.5 rounded-full px-3 text-sm font-semibold capitalize transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              mobileView === view ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Icon className="h-4 w-4" aria-hidden="true" />
+            {view}
+          </button>
+        );
+      })}
+    </div>
+  );
 
-      {/* Collapsible header + filters (fixed on mobile, static on desktop) */}
-      <div
-        ref={collapsibleRef}
-        style={collapsibleStyle}
-        className="bg-background"
-        onTransitionEnd={() => { isAnimatingRef.current = false; }}
-      >
-        {/* Header */}
-        <header className="flex items-center justify-between px-6 py-3 border-b border-border bg-card">
-          <div className="flex items-center gap-2">
-            <img src="/favicon.ico" alt="HoppyHour" className="h-8 w-8" />
-            <h1 className="text-lg font-bold tracking-tight">HoppyHour</h1>
-          </div>
-          <div className="flex items-center gap-3">
-            <p className="text-xs text-muted-foreground hidden sm:block">
-              {allVenuesWithHH.length} venue{allVenuesWithHH.length !== 1 ? "s" : ""} · {filteredHH.length} deal{filteredHH.length !== 1 ? "s" : ""}
-            </p>
-            {/* On mobile the submit CTA is the floating action button below */}
-            <Button variant="outline" size="sm" asChild className="hidden sm:inline-flex">
-              <Link to="/submit" className="gap-1.5">
-                <Plus className="h-3.5 w-3.5" />
-                Submit a Deal
-              </Link>
-            </Button>
-            {/* Theme switcher + secondary nav (submit / admin) */}
-            <OptionsMenu />
-          </div>
-        </header>
-
-        {/* Filters */}
-        <div className="px-4 py-3 border-b border-border">
-          <FiltersPanel date={date} onDateChange={(d) => { isDateManual.current = true; setDate(d); }} time={time} onTimeChange={(t) => { isTimeManual.current = true; setTime(t); }} radius={radius} onRadiusChange={setRadius} selectedTags={selectedTags} onTagsChange={setSelectedTags} searchQuery={searchQuery} onSearchQueryChange={setSearchQuery} onLocationSearch={handleLocationSearch} mapboxToken={token} />
-        </div>
-
-        {/* Geolocation denied banner */}
-        {geoStatus === "denied" && (
-          <div className="flex items-center gap-3 px-4 py-2.5 bg-amber-50 border-b border-amber-200 text-amber-800 text-sm dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-300">
-            <LocateOff className="h-4 w-4 flex-shrink-0" />
-            <span className="flex-1">
-              Location access denied — showing results near <strong>{DEFAULT_LOCATION_NAME}</strong>.
-            </span>
+  return (
+    <>
+      <div ref={pageRef} className="flex flex-col h-dvh" style={{ paddingTop: dynamicPaddingTop }}>
+        {/* Collapsed strip (phones): says it expands the filters, shows how
+            many are on, and offers a way back to the top of the list. */}
+        {headerCollapsed && (
+          <div
+            className="fixed z-50 flex items-stretch border-b border-border bg-card"
+            style={{
+              top: 0,
+              left: "env(safe-area-inset-left)",
+              right: "env(safe-area-inset-right)",
+              paddingTop: "env(safe-area-inset-top)",
+              height: `calc(${MINI_STRIP_HEIGHT}px + env(safe-area-inset-top))`,
+            }}
+          >
             <button
-              onClick={requestLocation}
-              className="font-medium underline underline-offset-2 hover:no-underline whitespace-nowrap"
+              type="button"
+              className="flex flex-1 items-center gap-2 px-4 text-sm font-medium select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              onClick={expandHeader}
+              aria-expanded={false}
             >
-              Use my location
+              <SlidersHorizontal className="h-4 w-4 text-primary" aria-hidden="true" />
+              Search and filters
+              {activeFilterCount > 0 && (
+                <span className="rounded-full bg-primary px-1.5 text-xs font-semibold leading-5 text-primary-foreground">
+                  {activeFilterCount}
+                  <span className="sr-only"> active</span>
+                </span>
+              )}
+              <ChevronDown className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
             </button>
+            {/* Landscape: the header starts folded, so the list/map switch
+                lives in the strip too. */}
+            {isShortTouch && <div className="flex items-center pr-1">{viewToggle}</div>}
+            {isShortTouch && mobileView === "map" ? null : mobileView === "list" ? (
+              <button
+                type="button"
+                onClick={scrollListToTop}
+                className="flex items-center gap-1 px-4 text-sm font-medium text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              >
+                <ArrowUp className="h-4 w-4" aria-hidden="true" />
+                Top
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setMobileView("list")}
+                className="flex items-center gap-1 px-4 text-sm font-medium text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              >
+                <List className="h-4 w-4" aria-hidden="true" />
+                List
+              </button>
+            )}
           </div>
+        )}
+
+        {/* Header + filters (fixed and collapsible on phones, static on desktop) */}
+        <div
+          ref={collapsibleRef}
+          style={collapsibleStyle}
+          className="bg-background"
+          onTransitionEnd={() => { isAnimatingRef.current = false; }}
+        >
+          <header className="flex items-center justify-between gap-2 border-b border-border bg-card px-4 pb-1.5 pt-[calc(0.375rem+env(safe-area-inset-top))] md:px-6 md:pb-3 md:pt-[calc(0.75rem+env(safe-area-inset-top))]">
+            <div className="flex min-w-0 items-center gap-2">
+              <img src="/favicon.ico" alt="" className="h-7 w-7 md:h-8 md:w-8" />
+              <h1 className="truncate text-base font-bold tracking-tight md:text-lg">HoppyHour</h1>
+            </div>
+            <div className="flex items-center gap-2 md:gap-3">
+              {!isMobile && listState === "ready" && (
+                <p className="text-xs text-muted-foreground" role="status">
+                  {countLine}
+                </p>
+              )}
+              {!isMobile && (
+                <Button variant="outline" size="sm" asChild>
+                  <Link to="/submit" className="gap-1.5">
+                    <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                    Submit a deal
+                  </Link>
+                </Button>
+              )}
+              {isMobile && viewToggle}
+              <OptionsMenu />
+            </div>
+          </header>
+
+          <div className="px-4 pb-2 pt-2.5 md:border-b md:border-border md:py-3">
+            <FiltersPanel
+              date={date}
+              onDateChange={onDateChange}
+              time={time}
+              onTimeChange={onTimeChange}
+              today={areaNow}
+              zoneNote={filterZoneNote}
+              isNow={selection.isNow}
+              onResetToNow={resetToNow}
+              radius={radius}
+              onRadiusChange={onRadiusChange}
+              selectedTags={selectedTags}
+              onTagsChange={onTagsChange}
+              searchQuery={searchQuery}
+              onSearchQueryChange={onSearchQueryChange}
+              onLocationSearch={handleLocationSearch}
+              mapboxToken={token}
+            />
+          </div>
+
+          {/* Location notice: one dismissible line. role=status so a retry's
+              result is heard; the full sentence is read out. */}
+          <div role="status" aria-live="polite" className="border-b border-border md:border-0">
+            {banner && chip && !noticeDismissed && (
+              <div className="px-4 pb-2 md:py-2">
+                <div className="flex h-8 items-center gap-2 rounded-full border border-amber-200 bg-amber-50 pl-3 pr-1 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                  {geoStatus === "requesting" ? (
+                    <Loader2 className="h-3.5 w-3.5 flex-shrink-0 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <LocateOff className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate" aria-hidden="true">
+                    {isMobile ? chip.label : banner.message}
+                  </span>
+                  <span className="sr-only">{banner.message}</span>
+                  {chip.action && (
+                    <button
+                      type="button"
+                      onClick={requestLocation}
+                      className="touch-target flex-shrink-0 whitespace-nowrap rounded-full px-2 py-1 font-semibold underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {chip.action}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setNoticeDismissed(true)}
+                    className="touch-target flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-amber-900/50"
+                    aria-label="Dismiss location notice"
+                  >
+                    <X className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Main content */}
+        <main className="flex min-h-0 flex-1 flex-col md:flex-row">
+          {/* List column (desktop: 380px, swapped for the detail when a venue is open) */}
+          <section
+            aria-labelledby="venues-heading"
+            className={cn(
+              "flex min-h-0 flex-col",
+              isMobile ? (mobileView === "list" ? "flex-1" : "hidden") : "w-[380px] flex-shrink-0 border-r border-border",
+            )}
+          >
+            <h2 id="venues-heading" className="sr-only">Venues</h2>
+            {/* Offline / saved results: outside the scroller so it stays put. */}
+            <ConnectionNotice
+              className={cn("px-3 pt-2", desktopDetail && "hidden")}
+              detail={savedNote ?? (venuesQuery.data !== undefined ? "Showing venues already loaded." : undefined)}
+              extra={isOnline ? savedNote : null}
+            />
+            <div
+              ref={listScrollRef as React.RefObject<HTMLDivElement>}
+              className={cn("min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-3", isMobile && "pt-2 pb-28", desktopDetail && "hidden")}
+              onScroll={handleListScroll}
+            >
+              {listState === "loading" ? (
+                <VenueListSkeleton />
+              ) : listState === "error" ? (
+                <VenueListError
+                  onRetry={() => { void venuesQuery.refetch(); }}
+                  retrying={venuesFetching}
+                  offline={!isOnline}
+                />
+              ) : listState === "empty" ? (
+                <VenueListEmpty
+                  copy={emptyCopy}
+                  onClearFilters={clearFilters}
+                  onWidenRadius={radiusIsTheCause && nextRadius ? () => onRadiusChange(nextRadius) : undefined}
+                  widenLabel={nextRadius ? `Search within ${formatDistanceRadius(nextRadius)}` : undefined}
+                />
+              ) : (
+                <>
+                  {isOnline && venuesQuery.isError && !venuesFetching && (
+                    <div role="alert" className="flex items-center gap-2 px-1 pb-2 text-xs text-muted-foreground">
+                      <span className="flex-1">
+                        {source.kind === "saved" ? "Couldn't reach HoppyHour." : "Couldn't refresh venues."}
+                      </span>
+                      <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => { void venuesQuery.refetch(); }}>
+                        Retry
+                      </Button>
+                    </div>
+                  )}
+                  {venuesFetching && (
+                    <div className="flex items-center gap-1.5 pb-2 text-xs text-muted-foreground" role="status">
+                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                      Updating…
+                    </div>
+                  )}
+                  {isMobile && (
+                    <p className="px-1 pb-2 text-xs text-muted-foreground" role="status">
+                      {countLine}
+                    </p>
+                  )}
+                  <VenueList
+                    venues={allVenuesWithHH}
+                    selectedVenueId={url.venue}
+                    onSelectVenue={openFromList}
+                    filteredHappyHourIds={filteredHHIds}
+                    liveVenueIds={liveVenueIds}
+                    nextDealLabels={nextDealLabels}
+                    zoneNotes={zoneNotes}
+                    selection={selection}
+                  />
+                </>
+              )}
+            </div>
+
+            {desktopDetail && (
+              <div role="region" aria-labelledby="venue-panel-title" className="flex min-h-0 flex-1 flex-col">
+                <div className="border-b border-border px-2 py-2">
+                  <Button variant="ghost" size="sm" className="gap-1.5" onClick={closeVenue}>
+                    <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                    Back to list
+                  </Button>
+                </div>
+                <div ref={panelScrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 pt-4">
+                  {detailVenue && detailStatus && detailClock ? (
+                    <div className="pb-6">
+                      <VenueDetail
+                        ref={panelHeadingRef}
+                        venue={detailVenue}
+                        status={detailStatus}
+                        selection={selection}
+                        filteredHappyHourIds={filteredHHIds}
+                        selectedDay={detailClock.day}
+                        selectedIsToday={detailClock.isToday}
+                        zoneNote={detailClock.zoneNote}
+                        outsideRadiusNote={outsideRadiusNote}
+                        headingId="venue-panel-title"
+                      />
+                    </div>
+                  ) : linkedQuery.isError ? (
+                    <p role="alert" className="text-sm text-muted-foreground">
+                      Couldn't load this venue. Check your connection and try again.
+                    </p>
+                  ) : (
+                    <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                      Loading venue…
+                    </div>
+                  )}
+                  <ScrollCue scrollRef={panelScrollRef} />
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* Map */}
+          <section aria-label="Map" className={cn("relative", isMobile ? (mobileView === "map" ? "flex-1 min-h-0" : "hidden") : "flex-1")}>
+            {tokenQuery.isError ? (
+              <MapMessage
+                kind="error"
+                title="The map couldn't load"
+                detail="The venue list still works."
+                onRetry={() => { void tokenQuery.refetch(); }}
+                retrying={tokenQuery.isFetching}
+              />
+            ) : !token && !isOnline ? (
+              <MapMessage
+                kind="offline"
+                title="You're offline"
+                detail="The map will load when your connection is back."
+              />
+            ) : !token || queryLng === null || queryLat === null ? (
+              <MapMessage kind="loading" title="Loading map…" />
+            ) : (
+              <>
+                <MapView
+                  token={token}
+                  lng={queryLng}
+                  lat={queryLat}
+                  venues={mapVenues}
+                  liveVenueIds={liveVenueIds}
+                  liveVenueCounts={liveVenueCounts}
+                  selectedVenueId={url.venue}
+                  selection={selection}
+                  onSelectVenue={openFromMap}
+                  onBackgroundClick={handleMapBackgroundClick}
+                  onBoundsChange={setMapCenter}
+                  userLng={realLocation ? lng : null}
+                  userLat={realLocation ? lat : null}
+                  onRecenter={realLocation ? handleRecenter : undefined}
+                  onDragStart={isMobile ? collapseHeader : undefined}
+                  bottomInset={isMobile && mobileView === "map" && venueOpen ? sheetHeight : 0}
+                />
+                {showSearchArea && (
+                  <div className="absolute left-1/2 top-4 z-10 -translate-x-1/2">
+                    <Button size="sm" onClick={handleSearchArea} className="gap-2 shadow-lg" disabled={venuesFetching}>
+                      <RefreshCw className={cn("h-3.5 w-3.5", venuesFetching && "animate-spin")} aria-hidden="true" />
+                      {venuesFetching ? "Searching…" : "Search this area"}
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        </main>
+
+        {/* Floating submit button (phones): clear of the home indicator and
+            Safari's bottom bar, out of the way while scrolling down, and
+            hidden while a venue is open. */}
+        {isMobile && !venueOpen && (
+          <Button
+            asChild
+            size="icon"
+            className={cn(
+              "fixed z-30 h-14 w-14 rounded-full shadow-lg shadow-primary/35 transition-transform duration-200",
+              fabHidden && "pointer-events-none translate-y-32",
+            )}
+            style={{
+              bottom: "max(1.5rem, calc(env(safe-area-inset-bottom) + 1rem))",
+              right: "calc(env(safe-area-inset-right) + 1rem)",
+            }}
+          >
+            <Link to="/submit" aria-label="Submit a deal" aria-hidden={fabHidden || undefined} tabIndex={fabHidden ? -1 : undefined}>
+              <Plus className="h-6 w-6" aria-hidden="true" />
+            </Link>
+          </Button>
         )}
       </div>
 
-      {/* Main content */}
-      <div className="flex-1 flex flex-col md:flex-row min-h-0">
-        {/* Mobile toggle — segmented pill control */}
-        {isMobile && <div className="px-4 py-2 border-b border-border">
-            <div className="flex rounded-full bg-muted p-1">
-              <button onClick={() => setMobileView("list")} className={`flex-1 py-1.5 text-sm font-semibold rounded-full transition-all ${mobileView === "list" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}>
-                List
-              </button>
-              <button onClick={() => setMobileView("map")} className={`flex-1 py-1.5 text-sm font-semibold rounded-full transition-all ${mobileView === "map" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}>
-                Map
-              </button>
-            </div>
-          </div>}
-
-        {/* List */}
-        <div
-          className={`${isMobile ? mobileView === "list" ? "flex-1 overflow-y-auto overscroll-y-contain" : "hidden" : "w-[380px] border-r border-border overflow-y-auto overscroll-y-contain"} p-3`}
-          onScroll={handleListScroll}
-        >
-          {venuesLoading ? (
-            <div className="space-y-3">
-              {[1, 2, 3].map((i) => <Skeleton key={i} className="h-24 w-full rounded-lg" />)}
-            </div>
-          ) : (
-            <>
-              {/* Fix #20: subtle refetch indicator during background radius/location changes */}
-              {venuesFetching && (
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground pb-2">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  Updating…
-                </div>
-              )}
-              {/* Counts live in the header on desktop (hidden sm:block above) */}
-              {allVenuesWithHH.length > 0 && (
-                <p className="sm:hidden text-xs text-muted-foreground px-1 pb-2">
-                  <span className="font-semibold text-foreground">{allVenuesWithHH.length} venue{allVenuesWithHH.length !== 1 ? "s" : ""}</span> · {filteredHH.length} deal{filteredHH.length !== 1 ? "s" : ""} on now
-                </p>
-              )}
-              <VenueList venues={allVenuesWithHH} selectedVenueId={selectedVenueId} onSelectVenue={handleOpenDetail} filteredHappyHourIds={filteredHHIds} liveVenueIds={liveVenueIds} />
-            </>
-          )}
-        </div>
-
-        {/* Map */}
-        <div className={`${isMobile ? mobileView === "map" ? "flex-1 min-h-0" : "hidden" : "flex-1"} relative`}>
-          {isLoading || !token ? <div className="w-full h-full flex items-center justify-center bg-muted">
-              <div className="text-center text-muted-foreground">
-                <MapPin className="h-8 w-8 mx-auto mb-2 animate-pulse" />
-                <p className="text-sm">Loading map…</p>
-              </div>
-            </div> : <>
-              <MapView token={token} lng={queryLng as number} lat={queryLat as number} venues={allVenuesWithHH} liveVenueIds={liveVenueIds} liveVenueCounts={liveVenueCounts} selectedVenueId={selectedVenueId} onSelectVenue={handleSelectVenue} onBoundsChange={setMapCenter} userLng={lng} userLat={lat} onRecenter={handleRecenter} onDragStart={isMobile ? collapseHeader : undefined} />
-              {showSearchArea && <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10">
-                  <Button size="sm" onClick={handleSearchArea} className="shadow-lg gap-2" disabled={venuesFetching}>
-                    <RefreshCw className={`h-3.5 w-3.5 ${venuesFetching ? "animate-spin" : ""}`} />
-                    {venuesFetching ? "Searching…" : "Search this area"}
-                  </Button>
-                </div>}
-            </>}
-        </div>
-      </div>
-
-      {/* Floating submit CTA (mobile) — hidden while the venue preview sheet
-          is open so it doesn't overlap */}
-      {isMobile && !(mobileView === "map" && selectedVenueId) && (
-        <Button
-          asChild
-          size="icon"
-          className="fixed bottom-6 right-4 z-30 h-14 w-14 rounded-full shadow-lg shadow-primary/35"
-        >
-          <Link to="/submit" aria-label="Submit a deal">
-            <Plus className="h-6 w-6" />
-          </Link>
-        </Button>
+      {/* Phone venue detail: one sheet, from the list or the map. */}
+      {isMobile && venueOpen && detailVenue && detailStatus && detailClock && (
+        <VenueSheet
+          venue={detailVenue}
+          status={detailStatus}
+          mode={sheetMode}
+          onModeChange={setSheetMode}
+          onClose={closeVenue}
+          selection={selection}
+          filteredHappyHourIds={filteredHHIds}
+          selectedDay={detailClock.day}
+          selectedIsToday={detailClock.isToday}
+          zoneNote={detailClock.zoneNote}
+          outsideRadiusNote={outsideRadiusNote}
+          onHeightChange={setSheetHeight}
+        />
       )}
-
-      {/* Mobile map venue preview */}
-      <VenueBottomSheet
-        venue={selectedVenue}
-        open={!!isMobile && mobileView === "map" && !!selectedVenueId}
-        onClose={() => handleSelectVenue(null)}
-        onViewDetails={handleOpenDetail}
-        filteredHappyHourIds={filteredHHIds}
-        liveVenueIds={liveVenueIds}
-      />
-
-      {/* Venue detail */}
-      <VenueDetailModal venue={detailVenue} open={!!detailVenueId} onClose={() => setDetailVenueId(null)} />
-    </div>;
+    </>
+  );
 }

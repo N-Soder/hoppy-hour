@@ -152,7 +152,7 @@ npm run test       # Vitest
 3. `npx wrangler r2 bucket create hoppy-hour-submission-images` (keep it private).
 4. Create a Cloudflare Access application covering `/admin` and `/api/admin/*`, then set `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` in `wrangler.toml`.
 5. Create a Turnstile widget. The site key is compiled into the client bundle, so it must be set wherever the build runs: put `VITE_TURNSTILE_SITE_KEY` in a local `.env.production.local` for `npm run deploy`, or in the Pages **build** environment variables for a Git-connected project. Add the secret as a Pages secret.
-6. Add the secrets: `npx wrangler pages secret put MAPBOX_ACCESS_TOKEN` (and `TURNSTILE_SECRET_KEY`, `ANTHROPIC_API_KEY`). Restrict the Mapbox token to your site's URLs.
+6. Add the secrets: `npx wrangler pages secret put MAPBOX_ACCESS_TOKEN` (and `TURNSTILE_SECRET_KEY`, `ANTHROPIC_API_KEY`). Restrict the Mapbox token to your site's URLs. Optionally, also add a second, server-only token as `MAPBOX_GEOCODE_TOKEN`: `/api/geocode` then uses it instead of the public map token, and stops sending a Referer to get past that token's URL restriction. Set a usage alert in Mapbox either way.
 7. Update the `og:url` / `og:image` URLs in `index.html` to your domain.
 8. Deploy with `npm run deploy`, which builds locally and uploads `dist/` and `functions/` to the Pages project named in `wrangler.toml`. Connecting the repository to Pages for push-to-deploy also works; pull-request previews share the production bindings unless you add an `[env.preview]` block.
 
