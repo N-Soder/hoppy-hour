@@ -12,6 +12,10 @@ export interface Venue {
   lat: number | null;
   lng: number | null;
   status: "active" | "inactive";
+  /** IANA time zone derived from lat/lng (null when unknown or before migration 0005). */
+  timezone?: string | null;
+  /** Admin list only: deals as grouped in the editor (see GET /api/admin/venues). */
+  deal_count?: number;
 }
 
 export interface HappyHour {
@@ -32,6 +36,12 @@ export interface VenueWithHappyHours {
   country: string | null;
   lat: number;
   lng: number;
+  /**
+   * IANA time zone the venue's deal times are in ("Australia/Perth"), derived
+   * from lat/lng on the server. Null when unknown (lookup failed, or migration
+   * 0005 not applied yet): the client then uses the viewer's own zone.
+   */
+  timezone: string | null;
   distance_meters: number;
   happy_hours: HappyHour[];
 }
@@ -79,6 +89,13 @@ export interface Submission {
   /** Existing venue this submission was attached to at approval (null = new venue / not approved). */
   venue_id: string | null;
   created_at: string;
+  /**
+   * Cloudflare Access identity that approved or rejected it. Null while
+   * pending, for decisions made before migration 0006, or before it is applied.
+   */
+  reviewed_by?: string | null;
+  /** When it was approved or rejected (ISO UTC); null in the same cases. */
+  reviewed_at?: string | null;
 }
 
 /** Body for POST /api/submissions (public form). */
@@ -123,11 +140,29 @@ export interface ApproveDeal extends SubmissionDeal {
  * only valid with `venue_id`.
  */
 export interface ApproveInput {
-  venue?: { name: string; address: string; country: string | null; lat: number; lng: number };
+  venue?: ApproveVenue;
   venue_id?: string;
   /** Optional field updates applied to the existing venue on approve. */
-  venue_update?: { name: string; address: string; country: string | null; lat: number; lng: number };
+  venue_update?: ApproveVenue;
   happy_hours: ApproveDeal[];
+}
+
+/**
+ * How an approval's coordinates were confirmed. Approval needs a real
+ * location, never a city-centre fallback:
+ *  - address: a street address geocoded to an address or named place
+ *  - manual:  coordinates entered by the reviewer
+ *  - venue:   (venue_update only) the attached venue's existing coordinates
+ */
+export type ApproveLocationSource = "address" | "manual" | "venue";
+
+export interface ApproveVenue {
+  name: string;
+  address: string;
+  country: string | null;
+  lat: number;
+  lng: number;
+  location_source: ApproveLocationSource;
 }
 
 /** Body for POST /api/admin/submissions/from-image (admin photo upload). */

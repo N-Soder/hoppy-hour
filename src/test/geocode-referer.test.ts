@@ -112,4 +112,20 @@ describe("geocode proxy robustness", () => {
     const res = (await onRequestGet(ctx("https://hoppy-hour.pages.dev/api/geocode?q=perth", makeEnv()))) as Response;
     expect(res.status).toBe(502);
   });
+
+  it("uses MAPBOX_GEOCODE_TOKEN without a spoofed Referer when set", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ features: [{}] }) }) as unknown as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await onRequestGet(ctx(
+      "https://hoppy-hour.pages.dev/api/geocode?q=sofia",
+      makeEnv({ MAPBOX_GEOCODE_TOKEN: "server-tok" }),
+    )) as Response;
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toContain("access_token=server-tok");
+    expect(url).not.toContain("access_token=tok&");
+    expect((init.headers as Record<string, string> | undefined)?.Referer).toBeUndefined();
+  });
 });
+

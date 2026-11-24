@@ -1,5 +1,6 @@
 import type { Config } from "tailwindcss";
 import tailwindcssAnimate from "tailwindcss-animate";
+import plugin from "tailwindcss/plugin";
 
 export default {
   darkMode: ["class"],
@@ -14,6 +15,16 @@ export default {
       },
     },
     extend: {
+      screens: {
+        // `md:` is the desktop/tablet layout. It needs the width AND either
+        // some height or a fine pointer, so a phone turned sideways (~874×402,
+        // touch) keeps the phone layout instead of a two-column layout with
+        // ~150px of usable height. Must stay the exact complement of the query
+        // in src/hooks/use-mobile.tsx.
+        md: {
+          raw: "(min-width: 768px) and (min-height: 501px), (min-width: 768px) and (pointer: fine), (min-width: 768px) and (pointer: none)",
+        },
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
@@ -23,6 +34,7 @@ export default {
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
+          hover: "hsl(var(--primary-hover))",
         },
         secondary: {
           DEFAULT: "hsl(var(--secondary))",
@@ -31,6 +43,8 @@ export default {
         destructive: {
           DEFAULT: "hsl(var(--destructive))",
           foreground: "hsl(var(--destructive-foreground))",
+          // Readable error-coloured text on background/card in both themes.
+          text: "hsl(var(--destructive-text))",
         },
         muted: {
           DEFAULT: "hsl(var(--muted))",
@@ -88,5 +102,12 @@ export default {
       },
     },
   },
-  plugins: [tailwindcssAnimate],
+  plugins: [
+    tailwindcssAnimate,
+    // `coarse:` targets touch screens (pointer: coarse), e.g. `coarse:h-11`
+    // to give a control a 44px height on phones only.
+    plugin(({ addVariant }) => {
+      addVariant("coarse", "@media (pointer: coarse)");
+    }),
+  ],
 } satisfies Config;

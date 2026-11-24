@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS venues (
   lng        REAL,
   status     TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  timezone   TEXT  -- IANA zone of the deal times, from lat/lng; NULL = unknown (db/migrations/0005)
 );
 
 CREATE INDEX IF NOT EXISTS idx_venues_status ON venues (status);
@@ -91,7 +92,9 @@ CREATE TABLE IF NOT EXISTS submissions (
   -- venue instead of creating a new one (see db/migrations/0004).
   venue_id      TEXT REFERENCES venues(id) ON DELETE SET NULL,
   honeypot      TEXT CHECK (honeypot IS NULL OR length(honeypot) <= 100),
-  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  reviewed_by   TEXT,  -- Access identity that approved/rejected it (db/migrations/0006)
+  reviewed_at   TEXT   -- when, ISO UTC; both cleared when moved back to pending
 );
 
 CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions (status);

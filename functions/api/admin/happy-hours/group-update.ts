@@ -3,10 +3,16 @@
 // batch. The old client did this as update-then-delete across two calls
 // (HappyHourManager), so a failure between them left stale copies live.
 // One D1 batch = all-or-nothing.
+//
+// The ids must be the records of ONE grouped deal (same venue, times,
+// description, tags and active state; see _shared/deal-group). A stale editor
+// whose group no longer matches gets a 400/404 instead of merging or deleting
+// records that are now a different deal.
 import type { Env } from "../../../_shared/db";
 import { nowIso, toHms } from "../../../_shared/db";
 import { error, json, readJson } from "../../../_shared/http";
-import { normalizeTags, validateDealFields } from "../../../_shared/validate";
+import { normalizeTags, validateDealFields, validateIdList } from "../../../_shared/validate";
+import { loadGroup } from "../../../_shared/deal-group";
 
 interface Body {
   ids: string[];
@@ -22,22 +28,27 @@ interface Body {
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const b = await readJson<Body>(request);
-  if (!b || !Array.isArray(b.ids) || b.ids.length === 0) return error("ids required", 400);
+  if (!b) return error("invalid JSON", 400);
+  const idsErr = validateIdList(b.ids);
+  if (idsErr) return error(idsErr, 400);
   const f = b.fields;
+  if (!f || typeof f !== "object") return error("fields required", 400);
   const fieldErr = validateDealFields(f);
   if (fieldErr) return error(fieldErr, 400);
+
+  const group = await loadGroup(env, b.ids);
+  if (!group.ok) return error(group.message, group.status);
+  const [keep, ...dups] = group.rows;
 
   const stmts = [
     env.DB.prepare(
       `UPDATE happy_hours SET days_of_week = ?2, start_time = ?3, end_time = ?4,
               description = ?5, tags = ?6, is_active = ?7, updated_at = ?8 WHERE id = ?1`,
     ).bind(
-      b.ids[0], JSON.stringify(f.days_of_week), toHms(f.start_time), toHms(f.end_time),
+      keep.id, JSON.stringify(f.days_of_week), toHms(f.start_time), toHms(f.end_time),
       f.description, JSON.stringify(normalizeTags(f.tags)), f.is_active ? 1 : 0, nowIso(),
     ),
-    ...b.ids.slice(1).map((dupId) =>
-      env.DB.prepare(`DELETE FROM happy_hours WHERE id = ?1`).bind(dupId),
-    ),
+    ...dups.map((dup) => env.DB.prepare(`DELETE FROM happy_hours WHERE id = ?1`).bind(dup.id)),
   ];
   await env.DB.batch(stmts);
   return json({ ok: true });
