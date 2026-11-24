@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import type { ToastActionElement, ToastProps } from "@/components/ui/toast";
+import { PHONE_QUERY } from "@/hooks/use-mobile";
 
 const TOAST_LIMIT = 3;
 const TOAST_REMOVE_DELAY = 5000;
@@ -134,8 +135,23 @@ function dispatch(action: Action) {
 
 type Toast = Omit<ToasterToast, "id">;
 
+/** Phone layout (see use-mobile): one toast at a time, the newest. */
+function isPhone(): boolean {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(PHONE_QUERY).matches;
+}
+
 function toast({ ...props }: Toast) {
   const id = genId();
+
+  // On a phone the newest toast replaces the one showing, rather than
+  // stacking over the page (the Toaster renders only the first). The older
+  // ones are dismissed, not just hidden, so they never come back when the
+  // newest closes. An older toast's Undo is gone with it; the newest's works.
+  if (isPhone()) {
+    memoryState.toasts
+      .filter((t) => t.open !== false)
+      .forEach((t) => dispatch({ type: "DISMISS_TOAST", toastId: t.id }));
+  }
 
   const update = (props: ToasterToast) =>
     dispatch({
