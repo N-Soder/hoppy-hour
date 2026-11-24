@@ -72,3 +72,25 @@ export function geoBanner(
       return null;
   }
 }
+
+/**
+ * One-line version of the banner for the phone header's location chip:
+ * a short status, the fallback place, and the same action. The full
+ * sentence from geoBanner stays available as the chip's description.
+ */
+export function geoChip(
+  status: GeoStatus,
+  fallbackName: string,
+  userInitiated: boolean,
+): { label: string; action: string | null } | null {
+  const banner = geoBanner(status, fallbackName, userInitiated);
+  if (!banner) return null;
+  const short: Partial<Record<GeoStatus, string>> = {
+    waiting: "Waiting for location",
+    denied: userInitiated ? "Location blocked" : "Location off",
+    timeout: "Location timed out",
+    unavailable: "Location unavailable",
+    unsupported: "No location",
+  };
+  return { label: `${short[status] ?? "Location"} · near ${fallbackName}`, action: banner.action };
+}
