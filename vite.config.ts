@@ -57,11 +57,16 @@ export default defineConfig({
         description: "Find happy hour deals near you.",
         lang: "en",
         categories: ["food", "lifestyle", "travel"],
-        // Light-theme surfaces: theme_color is the app header (--card),
-        // background_color the page (--background), so the title bar and the
-        // splash match the app. The page's theme-color metas (index.html,
-        // src/lib/theme-color.ts) take over for dark mode once it loads.
-        theme_color: "#ffffff",
+        // theme_color is the dark-theme page (--background in .dark). In an
+        // installed app on Android, Chrome paints the system navigation bar
+        // with the manifest theme_color, fixed at install, whatever the system
+        // theme or the page's theme-color metas (Chromium 160, emulator test
+        // page; user_preferences.color_scheme_dark is ignored). A white bar
+        // glared under the dark app; a dark bar under the light app is the
+        // lesser mismatch. The status bar and title bar follow the page's
+        // theme-color metas (index.html, src/lib/theme-color.ts) once it loads.
+        // background_color is the light-theme page: the splash screen.
+        theme_color: "#181311",
         background_color: "#F8F4EC",
         display: "standalone",
         scope: "/",
