@@ -10,7 +10,7 @@ import Submit from "./pages/Submit";
 import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { STATUS_BAR_TINT_ATTR, applyThemeColor, scheduleStatusBarTint, type ThemeChoice } from "./lib/theme-color";
+import { applyThemeColor, type ThemeChoice } from "./lib/theme-color";
 import { notifyNavigation } from "./lib/sw-update";
 
 const queryClient = new QueryClient();
@@ -24,14 +24,6 @@ function ThemeColorSync() {
     // re-inserts the metas, so the browser looks at them again.
     applyThemeColor(theme as ThemeChoice);
   }, [theme, resolvedTheme]);
-  // Safari on iOS 26 tints the status bar from a fixed strip at the top edge,
-  // re-created on every theme change once the theme class has been applied.
-  useEffect(() => scheduleStatusBarTint(resolvedTheme), [resolvedTheme]);
-  // Unmounted (tests, hot reload): take the strip away too.
-  useEffect(
-    () => () => document.querySelectorAll(`[${STATUS_BAR_TINT_ATTR}]`).forEach((el) => el.remove()),
-    [],
-  );
   return null;
 }
 
