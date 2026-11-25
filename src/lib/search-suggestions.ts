@@ -133,13 +133,12 @@ export function suggestionDomId(prefix: string, s: Suggestion): string {
 }
 
 /**
- * What Enter picks: the highlighted row, else the first place (the typed text
- * is most likely a place to go to: a venue match is one click away and
- * already filtering the list), else nothing.
+ * What Enter picks: the highlighted row, else the first row as listed (the
+ * first venue when any match, otherwise the first place), else nothing.
  */
 export function enterTarget(options: Suggestion[], activeIndex: number): Suggestion | null {
   if (activeIndex >= 0 && activeIndex < options.length) return options[activeIndex];
-  return options.find((o) => o.kind === "place") ?? null;
+  return options[0] ?? null;
 }
 
 /** Next highlighted row for an arrow key: wraps, and -1 (none) is a stop. */

@@ -139,8 +139,24 @@ describe("SearchCombobox", () => {
     expect(input()).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("Enter with nothing highlighted picks the first place, even before the lookup has run", async () => {
+  it("Enter with nothing highlighted picks the first venue when venues are listed first", async () => {
     type("sofia");
+    await settle();
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(onVenue).toHaveBeenCalledWith("v1");
+    expect(onPlace).not.toHaveBeenCalled();
+  });
+
+  it("Enter with nothing highlighted picks the first venue even while places are loading", async () => {
+    type("sofia");
+    fireEvent.keyDown(input(), { key: "Enter" }); // the debounce has not run out
+    expect(onVenue).toHaveBeenCalledWith("v1");
+    await settle();
+    expect(onPlace).not.toHaveBeenCalled();
+  });
+
+  it("Enter with no venue matches picks the first place, even before the lookup has run", async () => {
+    type("sofya"); // no venue matches; the place lookup answers with Sofia
     fireEvent.keyDown(input(), { key: "Enter" }); // the debounce has not run out
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await settle();
