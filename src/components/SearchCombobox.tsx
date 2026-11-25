@@ -103,7 +103,9 @@ export default function SearchCombobox({ query, onQueryChange, venues, near, onP
         if (!trimmed) return;
         e.preventDefault();
         if (e.nativeEvent.isComposing) return;
-        const target = open ? enterTarget(options, active) : null;
+        // With the list closed, venue matches are still known (they are
+        // local), so the first one is still what Enter picks.
+        const target = open ? enterTarget(options, active) : enterTarget(rankVenues(venues, trimmed), -1);
         if (target) {
           pick(target);
         } else if (showPlaces && !placesFor) {

@@ -157,6 +157,17 @@ describe("SearchCombobox", () => {
     expect(onPlace).not.toHaveBeenCalled();
   });
 
+  it("Enter after Escape closed the list still picks the first venue, not a place", async () => {
+    type("sofia");
+    await settle();
+    fireEvent.keyDown(input(), { key: "Escape" });
+    expect(input()).toHaveAttribute("aria-expanded", "false");
+    fireEvent.keyDown(input(), { key: "Enter" });
+    await settle();
+    expect(onVenue).toHaveBeenCalledWith("v1");
+    expect(onPlace).not.toHaveBeenCalled();
+  });
+
   it("Enter with no venue matches picks the first place, even before the lookup has run", async () => {
     type("sofya"); // no venue matches; the place lookup answers with Sofia
     fireEvent.keyDown(input(), { key: "Enter" }); // the debounce has not run out
