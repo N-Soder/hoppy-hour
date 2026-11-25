@@ -91,6 +91,21 @@ export function markerItems(
   return { pins, clusters, clusterCounts };
 }
 
+/**
+ * Marker stacking (CSS z-index on the marker element). Pins: plain 1, live 2,
+ * selected 3. Cluster bubbles sit above every pin, so a count is never hidden
+ * behind a pin; the selected venue is left out of the clusters, so its pin
+ * often sits right next to one. The selected pin's ring still shows around a
+ * bubble's edge, and a live bubble stays above a plain one.
+ */
+export function pinZIndex(isLive: boolean, isSelected: boolean): number {
+  return isSelected ? 3 : isLive ? 2 : 1;
+}
+
+export function clusterZIndex(live: number): number {
+  return live > 0 ? 5 : 4;
+}
+
 /** Mapbox clusterProperties: count the live venues inside each cluster. */
 export const CLUSTER_PROPERTIES = { live: ["+", ["get", "live"]] } as const;
 
