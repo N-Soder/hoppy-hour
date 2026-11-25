@@ -17,6 +17,16 @@ export type GeocodeResult = {
 import { COUNTRIES } from "./countries";
 
 /**
+ * The UI language for Mapbox's place names: the primary subtag of a BCP 47
+ * tag ("en-AU" → "en", "bg" → "bg"), or null when it is not a plain two-letter
+ * code (the proxy then answers in English).
+ */
+export function uiLanguage(tag: string | null | undefined = typeof navigator === "undefined" ? undefined : navigator.language): string | null {
+  const primary = (tag ?? "").split(/[-_]/)[0].toLowerCase();
+  return /^[a-z]{2}$/.test(primary) ? primary : null;
+}
+
+/**
  * The /api/geocode request for the home page's place search: worldwide (a
  * venue can be anywhere, so the deployment's GEOCODE_COUNTRY default must not
  * apply), biased towards the current search centre so nearby places rank
@@ -25,8 +35,11 @@ import { COUNTRIES } from "./countries";
 export function placeSearchUrl(
   query: string,
   near?: Coords | { lng: number; lat: number } | null,
-  /** Type-ahead: partial-word matching and how many results to return. */
-  options: { autocomplete?: boolean; limit?: number } = {},
+  /**
+   * Type-ahead: partial-word matching and how many results to return; and the
+   * language for place names (two letters, else left out: the proxy uses "en").
+   */
+  options: { autocomplete?: boolean; limit?: number; language?: string | null } = {},
 ): string {
   const parts = [`q=${encodeURIComponent(query.trim())}`, "scope=world"];
   if (near && Number.isFinite(near.lng) && Number.isFinite(near.lat)) {
@@ -35,6 +48,7 @@ export function placeSearchUrl(
   }
   if (options.autocomplete) parts.push("autocomplete=true");
   if (options.limit) parts.push(`limit=${options.limit}`);
+  if (options.language && /^[a-z]{2}$/.test(options.language)) parts.push(`language=${options.language}`);
   return `/api/geocode?${parts.join("&")}`;
 }
 

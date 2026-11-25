@@ -218,3 +218,29 @@ describe("geocode proxy worldwide place search (scope=world)", () => {
   });
 });
 
+describe("geocode proxy language", () => {
+  const languageSent = async (query: string) => {
+    const fetchMock = vi.fn(
+      async () => ({ ok: true, json: async () => ({ features: [{ text: "Sofia" }] }) }) as unknown as Response,
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await onRequestGet(ctx(`https://hoppy-hour.pages.dev/api/geocode?${query}`, makeEnv()));
+    return new URL((fetchMock.mock.calls[0] as unknown as [string])[0]).searchParams.getAll("language");
+  };
+
+  it("forwards a valid two-letter language", async () => {
+    expect(await languageSent("q=Sofia&scope=world&language=bg")).toEqual(["bg"]);
+  });
+
+  it("defaults to English when none is sent (the submit form's city picker)", async () => {
+    expect(await languageSent("q=Sof&types=place,locality&autocomplete=true&limit=8")).toEqual(["en"]);
+  });
+
+  it.each(["EN", "eng", "en-AU", "e", "en&types=poi", "<script>"])(
+    "replaces an invalid language %j with English",
+    async (bad) => {
+      expect(await languageSent(`q=Sofia&scope=world&language=${encodeURIComponent(bad)}`)).toEqual(["en"]);
+    },
+  );
+});
+

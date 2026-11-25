@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { placeSearchUrl } from "@/lib/geocode";
+import { placeSearchUrl, uiLanguage } from "@/lib/geocode";
 import {
   MAX_PLACE_SUGGESTIONS,
   PLACE_DEBOUNCE_MS,
@@ -55,7 +55,7 @@ export function usePlaceSuggestions(query: string, near: Near, enabled: boolean)
     abortRef.current = ctrl;
     setLookup({ status: "loading", query: q });
     try {
-      const res = await fetch(placeSearchUrl(q, nearRef.current, { autocomplete: true, limit: MAX_PLACE_SUGGESTIONS }), {
+      const res = await fetch(placeSearchUrl(q, nearRef.current, { autocomplete: true, limit: MAX_PLACE_SUGGESTIONS, language: uiLanguage() }), {
         signal: ctrl.signal,
       });
       if (res.status === 429) {

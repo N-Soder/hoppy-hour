@@ -104,6 +104,8 @@ describe("SearchCombobox", () => {
     const url = new URL(fetchMock.mock.calls[0][0] as string, "https://x.test");
     expect(url.searchParams.get("scope")).toBe("world");
     expect(url.searchParams.get("proximity")).toBe("115.86000,-31.95000");
+    // The UI language (jsdom's navigator.language is "en-US").
+    expect(url.searchParams.get("language")).toBe("en");
     const groups = screen.getAllByRole("group");
     expect(groups.map((g) => g.getAttribute("aria-labelledby") && document.getElementById(g.getAttribute("aria-labelledby")!)?.textContent)).toEqual([
       "Venues",
