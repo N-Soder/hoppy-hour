@@ -25,15 +25,16 @@ export interface DealText {
   offers: DealOffer[];
 }
 
-// "$9", "$9.00" or "$7.50", then a space and some text. "$6.5" or "$9pints"
-// are not read as a price, so the line stays plain rather than splitting
-// mid-number.
-const PRICE = /^(\$\d+(?:\.\d{2})?)\s+(\S[\s\S]*)$/;
+// "$9", "$9.00", "$7.50" or a range like "$8.50-$9.50" / "$12–$14", then a
+// space and some text. "$6.5" or "$9pints" are not read as a price, so the
+// line stays plain rather than splitting mid-number.
+const AMOUNT = String.raw`\$\d+(?:\.\d{2})?`;
+const PRICE = new RegExp(String.raw`^(${AMOUNT}(?:\s?[-–]\s?${AMOUNT})?)\s+(\S[\s\S]*)$`);
 
 function parseOffer(line: string): DealOffer {
   const m = PRICE.exec(line);
   if (!m) return { text: line };
-  const price = m[1].endsWith(".00") ? m[1].slice(0, -3) : m[1];
+  const price = m[1].replace(/\.00(?!\d)/g, "");
   return { price, text: m[2] };
 }
 

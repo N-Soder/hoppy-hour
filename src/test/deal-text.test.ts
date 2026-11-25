@@ -20,6 +20,16 @@ describe("splitOffers", () => {
     expect(splitOffers("Bottomless brunch")).toEqual({ offers: [{ text: "Bottomless brunch" }] });
   });
 
+  it("reads a price range as one price", () => {
+    expect(splitOffers("$8.50-$9.50 select pints").offers).toEqual([
+      { price: "$8.50-$9.50", text: "select pints" },
+    ]);
+    expect(splitOffers("$7 longneck; $12-$14 cocktails").offers[1]).toEqual({
+      price: "$12-$14",
+      text: "cocktails",
+    });
+  });
+
   it("keeps cents that matter", () => {
     expect(splitOffers("$7.50 house wine").offers).toEqual([{ price: "$7.50", text: "house wine" }]);
   });
