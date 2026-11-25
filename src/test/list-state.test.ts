@@ -45,6 +45,13 @@ describe("describeEmptyState", () => {
     expect(c.canClear).toBe(true);
   });
 
+  it("names a picked place, and offers to clear it", () => {
+    const c = describeEmptyState({ ...empty, placeName: "Sofia" });
+    expect(c.title).toBe("No venues within 5 km of Sofia");
+    expect(c.activeFilters).toEqual(["Near Sofia"]);
+    expect(c.canClear).toBe(true);
+  });
+
   it("offers to clear a non-default radius on its own", () => {
     const c = describeEmptyState({ ...empty, radiusMeters: 1000 });
     expect(c.title).toBe("No venues within 1 km");

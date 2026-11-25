@@ -1,18 +1,18 @@
 import { useState } from "react";
 import { format } from "date-fns";
+import SearchCombobox from "@/components/SearchCombobox";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
-import { CalendarIcon, Clock, Loader2, MapPin, RotateCcw, Search, X } from "lucide-react";
+import { CalendarIcon, Clock, LocateFixed, MapPin, RotateCcw, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
 import { VALID_TAGS } from "@/lib/constants";
 import { formatClock } from "@/lib/format";
 import { RADIUS_OPTIONS, formatDistanceRadius } from "@/lib/radius";
-import { placeSearchUrl } from "@/lib/geocode";
+import type { ChosenPlace } from "@/lib/url-state";
 
 const TAG_OPTIONS = VALID_TAGS;
 
@@ -38,10 +38,17 @@ interface FiltersPanelProps {
   onTagsChange: (tags: string[]) => void;
   searchQuery: string;
   onSearchQueryChange: (q: string) => void;
-  onLocationSearch: (coords: { lng: number; lat: number }) => void;
+  /** Loaded venues, for the search box's suggestions. */
+  searchVenues: { id: string; name: string; address: string; distance_meters?: number }[];
+  /** A venue picked from the suggestions: open it. */
+  onPickVenue: (id: string) => void;
+  /** A place picked from the suggestions: search there. */
+  onPickPlace: (place: ChosenPlace) => void;
+  /** The place being searched around, shown as a removable chip. */
+  place: ChosenPlace | null;
+  onClearPlace: () => void;
   /** Where the list is searching now: place results near it rank first. */
   searchCentre: { lng: number; lat: number } | null;
-  mapboxToken: string | undefined;
 }
 
 function sameDay(a: Date, b: Date): boolean {
@@ -75,12 +82,14 @@ export default function FiltersPanel({
   onTagsChange,
   searchQuery,
   onSearchQueryChange,
-  onLocationSearch,
+  searchVenues,
+  onPickVenue,
+  onPickPlace,
+  place,
+  onClearPlace,
   searchCentre,
 }: FiltersPanelProps) {
-  const [geocoding, setGeocoding] = useState(false);
   const [radiusOpen, setRadiusOpen] = useState(false);
-  const { toast } = useToast();
 
   const displayTime = formatClock(time);
   const isToday = sameDay(date, today);
@@ -97,77 +106,35 @@ export default function FiltersPanel({
     );
   };
 
-  const handleSearchKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Escape" && searchQuery) {
-      onSearchQueryChange("");
-      return;
-    }
-    if (e.key !== "Enter" || !searchQuery.trim()) return;
-    // Enter looks the text up as a place and moves the search there.
-    e.currentTarget.blur();
-    setGeocoding(true);
-    try {
-      // Worldwide, nearest first (see placeSearchUrl).
-      const res = await fetch(placeSearchUrl(searchQuery, searchCentre));
-      const geoData = await res.json();
-      if (geoData.features?.length > 0) {
-        const [lng, lat] = geoData.features[0].center;
-        onLocationSearch({ lng, lat });
-      } else {
-        toast({ title: "Place not found", description: "Try a more specific address or city name.", variant: "destructive" });
-      }
-    } catch {
-      toast({ title: "Place search failed", description: "Check your connection and try again.", variant: "destructive" });
-    } finally {
-      setGeocoding(false);
-    }
-  };
-
   return (
     <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
-      {/* Search: filters venues by name/address as you type; Enter looks the
-          text up as a place. */}
-      <div className="relative w-full md:w-auto md:min-w-[240px]">
-        <Label htmlFor="venue-search" className="sr-only">
-          Search venues, or press Enter to find a place
-        </Label>
-        {geocoding ? (
-          <Loader2 className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" aria-hidden="true" />
-        ) : (
-          <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-        )}
-        <Input
-          id="venue-search"
-          type="text"
-          inputMode="search"
-          enterKeyHint="search"
-          autoComplete="off"
-          autoCorrect="off"
-          autoCapitalize="none"
-          spellCheck={false}
-          placeholder="Search venues or places…"
-          value={searchQuery}
-          onChange={(e) => onSearchQueryChange(e.target.value)}
-          onKeyDown={handleSearchKeyDown}
-          className="h-11 rounded-full bg-card pl-10 pr-11 md:h-10"
-          disabled={geocoding}
-        />
-        {searchQuery && !geocoding && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="absolute right-1 top-1/2 h-9 w-9 -translate-y-1/2 rounded-full text-muted-foreground hover:text-foreground"
-            onClick={() => onSearchQueryChange("")}
-            aria-label="Clear search"
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        )}
-      </div>
+      {/* Search: venues (the text also filters the list as you type) and
+          places, in one suggestions list. */}
+      <SearchCombobox
+        query={searchQuery}
+        onQueryChange={onSearchQueryChange}
+        venues={searchVenues}
+        near={searchCentre}
+        onPickVenue={onPickVenue}
+        onPickPlace={onPickPlace}
+      />
 
       {/* When and where: one row, never wraps (scrolls sideways if it must). */}
       <div className={cn(scrollRowClass, "gap-1.5 py-0.5 -my-0.5 md:gap-2")} role="group" aria-label="When and how far">
+        {place && (
+          <span className="flex h-10 max-w-[15rem] flex-shrink-0 items-center gap-1.5 rounded-full border border-primary bg-primary/10 pl-3 pr-1 text-sm font-medium text-foreground">
+            <LocateFixed className="h-4 w-4 flex-shrink-0 text-primary" aria-hidden="true" />
+            <span className="min-w-0 truncate">Near {place.name}</span>
+            <button
+              type="button"
+              onClick={onClearPlace}
+              className="touch-target flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-primary/15 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={`Stop searching near ${place.name}`}
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </span>
+        )}
         <Popover>
           <PopoverTrigger asChild>
             <Button

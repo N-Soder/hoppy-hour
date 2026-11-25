@@ -1,7 +1,13 @@
 // The home page's view state as it lives in the query string, so a reload
 // restores the view and a link opens the same venue and filters.
 //
-//   ?venue=<id>&date=2026-11-28&time=17:30&radius=10000&tags=beer,wine&q=bar&view=map
+//   ?venue=<id>&date=2026-11-28&time=17:30&radius=10000&place=Sofia&near=23.3219,42.6977
+//    &tags=beer,wine&q=bar&view=map
+//
+// `place` and `near` are a place picked in the search box: its name for the
+// "Near Sofia" chip and its lng,lat, which becomes the search centre. They
+// come and go together; one without the other (or a bad coordinate) is
+// dropped, so links from before they existed are read exactly as before.
 //
 // Defaults stay out of the URL: no date/time means "now" (and keeps following
 // the clock), the default radius, no tags, no search and the list tab are all
@@ -12,6 +18,13 @@ import { DEFAULT_RADIUS, RADIUS_OPTIONS } from "./radius";
 
 export type HomeView = "list" | "map";
 
+/** A place picked in the search box: the list and map search around it. */
+export interface ChosenPlace {
+  name: string;
+  lng: number;
+  lat: number;
+}
+
 export interface HomeUrlState {
   venue: string | null;
   /** Selected date as local YYYY-MM-DD, or null for today. */
@@ -19,6 +32,7 @@ export interface HomeUrlState {
   /** Selected time as HH:MM, or null for now. */
   time: string | null;
   radius: number;
+  place: ChosenPlace | null;
   tags: string[];
   q: string;
   view: HomeView;
@@ -29,6 +43,7 @@ export const DEFAULT_URL_STATE: HomeUrlState = {
   date: null,
   time: null,
   radius: DEFAULT_RADIUS,
+  place: null,
   tags: [],
   q: "",
   view: "list",
@@ -39,6 +54,27 @@ const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 // Venue ids are UUIDs or similar slugs; keep anything sane and short.
 const VENUE_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_Q = 200;
+const MAX_PLACE_NAME = 100;
+const NEAR_RE = /^(-?\d{1,3}(?:\.\d{1,7})?),(-?\d{1,2}(?:\.\d{1,7})?)$/;
+
+/** A place from its `place` and `near` params, or null unless both are sane. */
+export function parsePlaceParams(name: string | null, near: string | null): ChosenPlace | null {
+  // Control characters out, whitespace collapsed.
+  // eslint-disable-next-line no-control-regex
+  const clean = (name ?? "").replace(/[\u0000-\u001f\u007f]/g, "").replace(/\s+/g, " ").trim().slice(0, MAX_PLACE_NAME);
+  const m = near ? NEAR_RE.exec(near) : null;
+  if (!clean || !m) return null;
+  const lng = Number(m[1]);
+  const lat = Number(m[2]);
+  if (Math.abs(lng) > 180 || Math.abs(lat) > 90) return null;
+  return { name: clean, lng, lat };
+}
+
+/** "23.3219,42.6977": lng,lat with five decimals (about a metre), zeros trimmed. */
+export function formatNear(place: ChosenPlace): string {
+  const f = (n: number) => String(Number(n.toFixed(5)));
+  return `${f(place.lng)},${f(place.lat)}`;
+}
 
 /** A real calendar date in YYYY-MM-DD, or null. */
 export function parseDateParam(v: string | null): string | null {
@@ -75,6 +111,7 @@ export function parseHomeParams(params: URLSearchParams): HomeUrlState {
     date: parseDateParam(params.get("date")),
     time: time && TIME_RE.test(time) ? time : null,
     radius: (RADIUS_OPTIONS as readonly number[]).includes(radius) ? radius : DEFAULT_RADIUS,
+    place: parsePlaceParams(params.get("place"), params.get("near")),
     tags,
     q: (params.get("q") ?? "").slice(0, MAX_Q),
     view: params.get("view") === "map" ? "map" : "list",
@@ -97,17 +134,21 @@ export function serializeHomeParams(state: HomeUrlState, keep?: URLSearchParams)
   if (state.date) out.set("date", state.date);
   if (state.time) out.set("time", state.time);
   if (state.radius !== DEFAULT_RADIUS) out.set("radius", String(state.radius));
+  if (state.place) {
+    out.set("place", state.place.name);
+    out.set("near", formatNear(state.place));
+  }
   if (state.tags.length > 0) out.set("tags", state.tags.join(","));
   if (state.q) out.set("q", state.q);
   if (state.view !== "list") out.set("view", state.view);
   return out;
 }
 
-const OWN_KEYS = new Set(["venue", "date", "time", "radius", "tags", "q", "view"]);
+const OWN_KEYS = new Set(["venue", "date", "time", "radius", "place", "near", "tags", "q", "view"]);
 
 /**
  * Every filter back to its default (date and time to now, the default radius,
- * no tags, no search), keeping the open venue and the list/map tab, which are
+ * no place, no tags, no search), keeping the open venue and the list/map tab, which are
  * not filters. Serialised, the filters leave the URL entirely.
  */
 export function clearedFilters(state: HomeUrlState): HomeUrlState {
@@ -116,6 +157,7 @@ export function clearedFilters(state: HomeUrlState): HomeUrlState {
     date: DEFAULT_URL_STATE.date,
     time: DEFAULT_URL_STATE.time,
     radius: DEFAULT_URL_STATE.radius,
+    place: DEFAULT_URL_STATE.place,
     tags: DEFAULT_URL_STATE.tags,
     q: DEFAULT_URL_STATE.q,
   };
@@ -126,6 +168,7 @@ export function countActiveFilters(state: HomeUrlState): number {
   return (
     (state.date || state.time ? 1 : 0) +
     (state.radius !== DEFAULT_RADIUS ? 1 : 0) +
+    (state.place ? 1 : 0) +
     state.tags.length +
     (state.q.trim() ? 1 : 0)
   );

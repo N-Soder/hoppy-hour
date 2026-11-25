@@ -37,6 +37,8 @@ export interface EmptyStateInput {
   radiusMeters: number;
   /** Venues the API returned inside the radius, before the name search. */
   venuesInRadius: number;
+  /** A place picked in the search box, searched around instead of the user's location. */
+  placeName?: string | null;
 }
 
 export interface EmptyStateCopy {
@@ -59,6 +61,7 @@ export function describeEmptyState(i: EmptyStateInput): EmptyStateCopy {
     activeFilters.push(i.tags.map((t) => t.charAt(0).toUpperCase() + t.slice(1)).join(", "));
   }
   if (i.whenPhrase) activeFilters.push(i.whenPhrase);
+  if (i.placeName) activeFilters.push(`Near ${i.placeName}`);
   // A radius other than the default is a filter too: "Clear filters" puts it back.
   if (i.radiusMeters !== DEFAULT_RADIUS) activeFilters.push(`Within ${formatDistanceRadius(i.radiusMeters)}`);
   const canClear = activeFilters.length > 0;
@@ -67,13 +70,15 @@ export function describeEmptyState(i: EmptyStateInput): EmptyStateCopy {
     // The name search hid everything; the radius is not the reason.
     return {
       title: `No venues match “${q}”`,
-      detail: "Check the spelling, or press Enter to look for a place with that name.",
+      detail: "Check the spelling, or pick a place from the search suggestions to look there.",
       activeFilters,
       canClear,
     };
   }
   return {
-    title: `No venues within ${formatDistanceRadius(i.radiusMeters)}`,
+    title: i.placeName
+      ? `No venues within ${formatDistanceRadius(i.radiusMeters)} of ${i.placeName}`
+      : `No venues within ${formatDistanceRadius(i.radiusMeters)}`,
     detail: "Try a wider distance or another area, or submit a deal you know about.",
     activeFilters,
     canClear,

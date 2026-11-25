@@ -48,7 +48,7 @@ import { describeSelection, plural } from "@/lib/format";
 import { geoBanner, geoChip, hasRealLocation, isLocating } from "@/lib/geo-status";
 import { describeEmptyState, selectListState } from "@/lib/list-state";
 import { DEFAULT_RADIUS, MAX_RADIUS, RADIUS_OPTIONS, formatDistanceRadius } from "@/lib/radius";
-import { clearedFilters, countActiveFilters, fromDateParam, toDateParam } from "@/lib/url-state";
+import { clearedFilters, countActiveFilters, fromDateParam, toDateParam, type ChosenPlace } from "@/lib/url-state";
 import { areaTimeZone, dealsOnAt, nextDealLabel, selectionInstant, venueClock } from "@/lib/venue-time";
 import { sameClock, viewerTimeZone, wallClockAsLocalDate, wallClockAt, zoneLabel } from "@/lib/zoned-time";
 import { scrollBehavior } from "@/lib/motion";
@@ -87,8 +87,11 @@ export default function Index() {
   // Map center for "search this area" (not in the URL: it is a map gesture).
   const [mapCenter, setMapCenter] = useState<{ lng: number; lat: number } | null>(null);
   const [searchCenter, setSearchCenter] = useState<{ lng: number; lat: number } | null>(null);
-  const queryLng = searchCenter?.lng ?? lng;
-  const queryLat = searchCenter?.lat ?? lat;
+  // Where the list searches: the area the user asked for on the map, else a
+  // place picked in the search box (in the URL), else the user's location.
+  const chosenPlace = url.place;
+  const queryLng = searchCenter?.lng ?? chosenPlace?.lng ?? lng;
+  const queryLat = searchCenter?.lat ?? chosenPlace?.lat ?? lat;
   const venuesQuery = useVenuesWithinRadius(queryLng, queryLat, radius);
   const { isFetching: venuesFetching } = venuesQuery;
 
@@ -250,6 +253,16 @@ export default function Index() {
     },
     [openVenue],
   );
+  // A venue picked in the search suggestions: as tapping its card, and the
+  // text that found it stops filtering the list.
+  const openFromSearch = useCallback(
+    (id: string) => {
+      openerRef.current = { kind: "card", id };
+      setSheetMode("expanded");
+      openVenue(id, { q: "" });
+    },
+    [openVenue],
+  );
   const handleMapBackgroundClick = useCallback(() => {
     if (isMobile && venueOpen && sheetMode === "compact") closeVenue();
   }, [isMobile, venueOpen, sheetMode, closeVenue]);
@@ -312,16 +325,28 @@ export default function Index() {
   }, [desktopDetail, url.venue]);
 
   // ── Filters ──────────────────────────────────────────────────────────
-  // Both fly the map to the new search centre, a move MapView doesn't report,
-  // so forget the last user-moved centre too.
-  const handleLocationSearch = useCallback((coords: { lng: number; lat: number }) => {
-    setSearchCenter(coords);
+  // Each flies the map to the new search centre, a move MapView doesn't
+  // report, so forget the last user-moved centre too.
+  const handlePickPlace = useCallback(
+    (place: ChosenPlace) => {
+      setSearchCenter(null);
+      setMapCenter(null);
+      // The typed text found the place; it must not go on filtering venue names.
+      updateUrl({ place, q: "" });
+    },
+    [updateUrl],
+  );
+  // Removing the chip: back to the user's location, or the default.
+  const handleClearPlace = useCallback(() => {
+    setSearchCenter(null);
     setMapCenter(null);
-  }, []);
+    updateUrl({ place: null });
+  }, [updateUrl]);
   const handleRecenter = useCallback(() => {
     setSearchCenter(null);
     setMapCenter(null);
-  }, []);
+    if (chosenPlace) updateUrl({ place: null });
+  }, [chosenPlace, updateUrl]);
   const showSearchArea = mapCenter && (Math.abs(mapCenter.lng - (queryLng ?? 0)) > 0.005 || Math.abs(mapCenter.lat - (queryLat ?? 0)) > 0.005);
   const handleSearchArea = () => {
     if (mapCenter) setSearchCenter(mapCenter);
@@ -369,6 +394,7 @@ export default function Index() {
     whenPhrase: selection.isNow ? null : selection.phrase,
     radiusMeters: radius,
     venuesInRadius: venues.length,
+    placeName: chosenPlace?.name ?? null,
   });
   const nextRadius = RADIUS_OPTIONS.find((r) => r > radius);
   const radiusIsTheCause = venues.length === 0 && radius < MAX_RADIUS && nextRadius !== undefined;
@@ -388,6 +414,9 @@ export default function Index() {
   // A new problem (e.g. a retry that failed differently) shows the notice again.
   useEffect(() => setNoticeDismissed(false), [geoStatus, geoUserInitiated]);
   const realLocation = hasRealLocation(geoStatus);
+  // With a place picked the search isn't based on the user's location, so a
+  // location problem is beside the point; it shows again if the place goes.
+  const showLocationNotice = !!banner && !!chip && !noticeDismissed && !chosenPlace;
 
   // ── Phone: scroll-linked header hide, FAB hide ────────────────────────
   const collapsibleRef = useRef<HTMLDivElement>(null);
@@ -485,7 +514,7 @@ export default function Index() {
   const detailClock = detailVenue ? venueClocks.get(detailVenue.id) ?? null : null;
   const outsideRadiusNote =
     detailVenue && !venueInList
-      ? `Outside your ${formatDistanceRadius(radius)} search area, so it isn't in the list. Distance is from ${realLocation && !searchCenter ? "you" : "the map's search centre"}.`
+      ? `Outside your ${formatDistanceRadius(radius)} search area, so it isn't in the list. Distance is from ${realLocation && !searchCenter && !chosenPlace ? "you" : "the map's search centre"}.`
       : null;
 
   const viewToggle = (
@@ -615,16 +644,19 @@ export default function Index() {
               onTagsChange={onTagsChange}
               searchQuery={searchQuery}
               onSearchQueryChange={onSearchQueryChange}
-              onLocationSearch={handleLocationSearch}
+              searchVenues={venues}
+              onPickVenue={openFromSearch}
+              onPickPlace={handlePickPlace}
+              place={chosenPlace}
+              onClearPlace={handleClearPlace}
               searchCentre={queryLng !== null && queryLat !== null ? { lng: queryLng, lat: queryLat } : null}
-              mapboxToken={token}
             />
           </div>
 
           {/* Location notice: one dismissible line. role=status so a retry's
               result is heard; the full sentence is read out. */}
           <div role="status" aria-live="polite" className="border-b border-border md:border-0">
-            {banner && chip && !noticeDismissed && (
+            {showLocationNotice && banner && chip && (
               <div className="px-4 pb-2 md:py-2">
                 <div className="flex h-8 items-center gap-2 rounded-full border border-amber-200 bg-amber-50 pl-3 pr-1 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
                   {geoStatus === "requesting" ? (
