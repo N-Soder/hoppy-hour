@@ -39,7 +39,7 @@ const headingClass = "px-2.5 pb-1 pt-2 text-xs font-semibold uppercase tracking-
  * The search box: one combobox (WAI-ARIA 1.2 pattern, focus stays in the
  * input) suggesting matching venues first and places below. Picking a venue
  * opens it; picking a place moves the search there. Enter picks the
- * highlighted row, or the first place.
+ * highlighted row, or the first row as listed.
  */
 export default function SearchCombobox({ query, onQueryChange, venues, near, onPickVenue, onPickPlace }: SearchComboboxProps) {
   const uid = useId().replace(/:/g, "");
@@ -103,7 +103,9 @@ export default function SearchCombobox({ query, onQueryChange, venues, near, onP
         if (!trimmed) return;
         e.preventDefault();
         if (e.nativeEvent.isComposing) return;
-        const target = open ? enterTarget(options, active) : null;
+        // With the list closed, venue matches are still known (they are
+        // local), so the first one is still what Enter picks.
+        const target = open ? enterTarget(options, active) : enterTarget(rankVenues(venues, trimmed), -1);
         if (target) {
           pick(target);
         } else if (showPlaces && !placesFor) {

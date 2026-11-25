@@ -110,11 +110,14 @@ describe("rows, keyboard and Enter", () => {
     expect(options.map((o) => o.kind)).toEqual(["venue", "venue", "place", "place"]);
   });
 
-  it("Enter picks the highlighted row, else the first place, else nothing", () => {
+  it("Enter picks the highlighted row, else the first row as listed, else nothing", () => {
     expect(enterTarget(options, 1)).toBe(v[1]);
     expect(enterTarget(options, 3)).toBe(p[1]);
-    expect(enterTarget(options, -1)).toBe(p[0]);
-    expect(enterTarget(v, -1)).toBeNull();
+    // Nothing highlighted: the first venue when venues are listed above places.
+    expect(enterTarget(options, -1)).toBe(v[0]);
+    expect(enterTarget(v, -1)).toBe(v[0]);
+    // No venue matches: the first place.
+    expect(enterTarget(suggestionOrder([], p), -1)).toBe(p[0]);
     expect(enterTarget([], -1)).toBeNull();
   });
 

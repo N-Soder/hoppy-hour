@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clusterLabel, clusterText, markerItems, pinLabel, venuesToFeatureCollection } from "@/lib/map-clusters";
+import { clusterLabel, clusterText, clusterZIndex, markerItems, pinLabel, pinZIndex, venuesToFeatureCollection } from "@/lib/map-clusters";
 
 const NOW = { isNow: true, badge: "Live", phrase: "now" };
 const SAT = { isNow: false, badge: "On Sat 5 pm", phrase: "Sat 5 pm" };
@@ -72,5 +72,18 @@ describe("labels", () => {
   it("caps the bubble text", () => {
     expect(clusterText(8)).toBe("8");
     expect(clusterText(150)).toBe("99+");
+  });
+});
+
+describe("marker stacking", () => {
+  it("draws every cluster bubble above every pin, the selected one included", () => {
+    const pins = [pinZIndex(false, false), pinZIndex(true, false), pinZIndex(false, true), pinZIndex(true, true)];
+    const clusters = [clusterZIndex(0), clusterZIndex(3)];
+    expect(Math.min(...clusters)).toBeGreaterThan(Math.max(...pins));
+  });
+  it("keeps the selected pin above other pins and live above plain", () => {
+    expect(pinZIndex(false, true)).toBeGreaterThan(pinZIndex(true, false));
+    expect(pinZIndex(true, false)).toBeGreaterThan(pinZIndex(false, false));
+    expect(clusterZIndex(1)).toBeGreaterThan(clusterZIndex(0));
   });
 });

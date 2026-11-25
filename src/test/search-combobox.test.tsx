@@ -104,6 +104,8 @@ describe("SearchCombobox", () => {
     const url = new URL(fetchMock.mock.calls[0][0] as string, "https://x.test");
     expect(url.searchParams.get("scope")).toBe("world");
     expect(url.searchParams.get("proximity")).toBe("115.86000,-31.95000");
+    // The UI language (jsdom's navigator.language is "en-US").
+    expect(url.searchParams.get("language")).toBe("en");
     const groups = screen.getAllByRole("group");
     expect(groups.map((g) => g.getAttribute("aria-labelledby") && document.getElementById(g.getAttribute("aria-labelledby")!)?.textContent)).toEqual([
       "Venues",
@@ -139,8 +141,35 @@ describe("SearchCombobox", () => {
     expect(input()).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("Enter with nothing highlighted picks the first place, even before the lookup has run", async () => {
+  it("Enter with nothing highlighted picks the first venue when venues are listed first", async () => {
     type("sofia");
+    await settle();
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(onVenue).toHaveBeenCalledWith("v1");
+    expect(onPlace).not.toHaveBeenCalled();
+  });
+
+  it("Enter with nothing highlighted picks the first venue even while places are loading", async () => {
+    type("sofia");
+    fireEvent.keyDown(input(), { key: "Enter" }); // the debounce has not run out
+    expect(onVenue).toHaveBeenCalledWith("v1");
+    await settle();
+    expect(onPlace).not.toHaveBeenCalled();
+  });
+
+  it("Enter after Escape closed the list still picks the first venue, not a place", async () => {
+    type("sofia");
+    await settle();
+    fireEvent.keyDown(input(), { key: "Escape" });
+    expect(input()).toHaveAttribute("aria-expanded", "false");
+    fireEvent.keyDown(input(), { key: "Enter" });
+    await settle();
+    expect(onVenue).toHaveBeenCalledWith("v1");
+    expect(onPlace).not.toHaveBeenCalled();
+  });
+
+  it("Enter with no venue matches picks the first place, even before the lookup has run", async () => {
+    type("sofya"); // no venue matches; the place lookup answers with Sofia
     fireEvent.keyDown(input(), { key: "Enter" }); // the debounce has not run out
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await settle();

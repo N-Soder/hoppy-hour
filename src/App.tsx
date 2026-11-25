@@ -10,7 +10,7 @@ import Submit from "./pages/Submit";
 import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { applyThemeColor, type ThemeChoice } from "./lib/theme-color";
+import { STATUS_BAR_TINT_ATTR, applyThemeColor, scheduleStatusBarTint, type ThemeChoice } from "./lib/theme-color";
 import { notifyNavigation } from "./lib/sw-update";
 
 const queryClient = new QueryClient();
@@ -24,19 +24,15 @@ function ThemeColorSync() {
     // re-inserts the metas, so the browser looks at them again.
     applyThemeColor(theme as ThemeChoice);
   }, [theme, resolvedTheme]);
-  // Safari on iOS 26 ignores theme-color and tints the status bar from a
-  // fixed element at the top edge, sampled when such an element appears. This
-  // strip, in the header colour, is re-created on every theme change so the
-  // tint is sampled again rather than kept from before the switch.
-  return (
-    <div
-      key={resolvedTheme ?? "unknown"}
-      aria-hidden="true"
-      data-status-bar-tint=""
-      className="pointer-events-none fixed inset-x-0 top-0 z-[60] hidden bg-card coarse:block"
-      style={{ height: "max(1px, env(safe-area-inset-top))" }}
-    />
+  // Safari on iOS 26 tints the status bar from a fixed strip at the top edge,
+  // re-created on every theme change once the theme class has been applied.
+  useEffect(() => scheduleStatusBarTint(resolvedTheme), [resolvedTheme]);
+  // Unmounted (tests, hot reload): take the strip away too.
+  useEffect(
+    () => () => document.querySelectorAll(`[${STATUS_BAR_TINT_ATTR}]`).forEach((el) => el.remove()),
+    [],
   );
+  return null;
 }
 
 /** Tell the service-worker updater about in-app page changes (not filter or

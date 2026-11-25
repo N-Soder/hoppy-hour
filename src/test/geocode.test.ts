@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { countryCodeFromContext, geocodeAddress, normalizeAddress, placeSearchUrl } from "@/lib/geocode";
+import { countryCodeFromContext, geocodeAddress, normalizeAddress, placeSearchUrl, uiLanguage } from "@/lib/geocode";
 
 describe("placeSearchUrl", () => {
   it("searches worldwide, near the given centre", () => {
@@ -15,6 +15,31 @@ describe("placeSearchUrl", () => {
     const url = new URL(placeSearchUrl("Sofia", null), "https://x.test");
     expect(url.searchParams.get("scope")).toBe("world");
     expect(url.searchParams.has("proximity")).toBe(false);
+  });
+
+  it("sends a valid UI language, and leaves out anything else", () => {
+    const lang = (language: string | null) =>
+      new URL(placeSearchUrl("Sofia", null, { language }), "https://x.test").searchParams.get("language");
+    expect(lang("bg")).toBe("bg");
+    expect(lang(null)).toBeNull();
+    expect(lang("EN")).toBeNull();
+    expect(lang("en&types=poi")).toBeNull();
+  });
+});
+
+describe("uiLanguage", () => {
+  it("takes the primary subtag of the browser language", () => {
+    expect(uiLanguage("en-AU")).toBe("en");
+    expect(uiLanguage("bg")).toBe("bg");
+    expect(uiLanguage("DE-de")).toBe("de");
+    expect(uiLanguage("pt_BR")).toBe("pt");
+  });
+
+  it("is null for anything that is not a two-letter code", () => {
+    expect(uiLanguage("fil-PH")).toBeNull();
+    expect(uiLanguage("")).toBeNull();
+    expect(uiLanguage(null)).toBeNull();
+    expect(uiLanguage("x")).toBeNull();
   });
 });
 

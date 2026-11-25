@@ -15,8 +15,10 @@ import {
   VENUE_SOURCE_ID,
   clusterLabel,
   clusterText,
+  clusterZIndex,
   markerItems,
   pinLabel,
+  pinZIndex,
   venuesToFeatureCollection,
 } from "@/lib/map-clusters";
 import { MapMessage } from "@/components/MapMessage";
@@ -150,7 +152,7 @@ export default function MapView({
     const face = el.firstChild as HTMLElement;
     const c = pinColours(isLive, isSelected, isDark);
     setMarkerSize(el, face, isSelected ? 36 : isLive ? 28 : 18);
-    el.style.zIndex = isSelected ? "3" : isLive ? "2" : "1";
+    el.style.zIndex = String(pinZIndex(isLive, isSelected));
     Object.assign(face.style, {
       background: c.bg,
       border: c.border,
@@ -174,7 +176,7 @@ export default function MapView({
     const face = el.firstChild as HTMLElement;
     const liveC = pinColours(true, false, isDark);
     setMarkerSize(el, face, count < 10 ? 34 : count < 50 ? 40 : 46);
-    el.style.zIndex = live > 0 ? "2" : "1";
+    el.style.zIndex = String(clusterZIndex(live));
     Object.assign(face.style, {
       background: live > 0 ? (isDark ? "hsl(25, 21%, 14%)" : "white") : isDark ? "hsl(20, 8%, 30%)" : "hsl(0, 0%, 88%)",
       border: live > 0 ? `3px solid ${liveC.bg}` : `2px solid ${isDark ? "hsl(20, 8%, 55%)" : "hsl(0, 0%, 55%)"}`,

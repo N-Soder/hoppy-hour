@@ -5,7 +5,16 @@ import { createElement } from "react";
 import { render } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { DARK_MEDIA, LIGHT_MEDIA, THEME_COLORS, applyThemeColor, themeColorMetas } from "@/lib/theme-color";
+import {
+  DARK_MEDIA,
+  LIGHT_MEDIA,
+  STATUS_BAR_TINT_ATTR,
+  THEME_COLORS,
+  applyThemeColor,
+  replaceStatusBarTint,
+  scheduleStatusBarTint,
+  themeColorMetas,
+} from "@/lib/theme-color";
 import { DEFAULT_TITLE, pageTitle, useDocumentTitle, useNoIndex } from "@/hooks/use-document-title";
 import { PHONE_QUERY, SHORT_TOUCH_QUERY } from "@/hooks/use-mobile";
 import tailwindConfig from "../../tailwind.config";
@@ -76,6 +85,59 @@ describe("theme-color", () => {
     expect(html).toContain(`media="(prefers-color-scheme: light)" content="${THEME_COLORS.light}"`);
     expect(html).toContain(`media="(prefers-color-scheme: dark)" content="${THEME_COLORS.dark}"`);
     expect(html).not.toContain('name="apple-mobile-web-app-capable"');
+  });
+});
+
+describe("status-bar tint strip (iOS 26)", () => {
+  const strips = (doc: Document) => [...doc.querySelectorAll(`[${STATUS_BAR_TINT_ATTR}]`)];
+  function frames() {
+    const queue: (() => void)[] = [];
+    return {
+      raf: (cb: () => void) => queue.push(cb),
+      cancel: (id: number) => {
+        queue[id - 1] = () => {};
+      },
+      step: () => queue.splice(0).forEach((cb) => cb()),
+    };
+  }
+
+  it("is replaced, not reused, so Safari samples its colour again", () => {
+    const doc = document.implementation.createHTMLDocument("t");
+    const first = replaceStatusBarTint(doc);
+    const second = replaceStatusBarTint(doc);
+    expect(strips(doc)).toEqual([second]);
+    expect(first.isConnected).toBe(false);
+    expect(second.className).toContain("bg-card");
+  });
+
+  it("appears only in a later frame, once <html> carries the new theme class", () => {
+    const doc = document.implementation.createHTMLDocument("t");
+    doc.documentElement.className = "light";
+    const old = replaceStatusBarTint(doc);
+    const f = frames();
+    scheduleStatusBarTint("dark", doc, f.raf, f.cancel);
+    expect(strips(doc)).toEqual([old]); // not in the same task as the theme change
+    f.step();
+    expect(strips(doc)).toEqual([old]); // the class is still "light": wait
+    doc.documentElement.className = "dark";
+    f.step();
+    expect(strips(doc)).toHaveLength(1);
+    expect(strips(doc)[0]).not.toBe(old);
+  });
+
+  it("gives up waiting after a few frames, and can be cancelled", () => {
+    const doc = document.implementation.createHTMLDocument("t");
+    const f = frames();
+    scheduleStatusBarTint("dark", doc, f.raf, f.cancel);
+    for (let i = 0; i < 10; i++) f.step();
+    expect(strips(doc)).toHaveLength(1);
+
+    const g = frames();
+    const cancel = scheduleStatusBarTint(undefined, doc, g.raf, g.cancel);
+    const current = strips(doc)[0];
+    cancel();
+    g.step();
+    expect(strips(doc)).toEqual([current]);
   });
 });
 

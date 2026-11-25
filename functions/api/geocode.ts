@@ -43,6 +43,12 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     extra.push(`&proximity=${proximity}`);
   }
   if (params.get("autocomplete") === "true") extra.push(`&autocomplete=true`);
+  // Place names in the client's UI language (?language=, two lowercase
+  // letters), else English: without it Mapbox answers in the local script
+  // ("София" for Sofia), which the user may not read.
+  const languageRaw = params.get("language");
+  const language = languageRaw && /^[a-z]{2}$/.test(languageRaw) ? languageRaw : "en";
+  extra.push(`&language=${language}`);
   const limitRaw = Number(params.get("limit"));
   const limit = Number.isInteger(limitRaw) && limitRaw >= 1 && limitRaw <= 10 ? limitRaw : 5;
 

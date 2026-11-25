@@ -263,7 +263,7 @@ export function VenueListEmpty({
   widenLabel?: string;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center px-4 py-16 text-center">
+    <div className="flex flex-col items-center justify-center px-4 py-16 text-center [overflow-wrap:anywhere]">
       <MapPin className="mb-3 h-10 w-10 text-muted-foreground" aria-hidden="true" />
       <p className="text-sm font-semibold">{copy.title}</p>
       <p className="mt-1 max-w-xs text-sm text-muted-foreground">{copy.detail}</p>

@@ -50,3 +50,58 @@ export function applyThemeColor(choice: ThemeChoice, doc: Document = document): 
   }
   old.forEach((m) => m.remove());
 }
+
+// Safari on iOS 26 ignores theme-color and tints the status bar from a fixed
+// element at the top edge, sampling its colour when such an element appears
+// and keeping it. So a 1 px strip in the header colour (touch screens only) is
+// re-created on every theme change.
+//
+// It must appear only once the new theme's class is on <html>. Rendered by
+// React keyed on the resolved theme, the new strip was committed in the same
+// render as the theme state, while next-themes changes the class later, in an
+// effect; when a frame was painted in between, Safari sampled the strip in the
+// old colour and kept it (the strip stayed white after a live switch to dark,
+// now and then). Now the strip is replaced in an animation frame, and only once
+// the class matches; it waits more frames if it does not yet.
+
+export const STATUS_BAR_TINT_ATTR = "data-status-bar-tint";
+// transition-none: with "reduce motion" on, index.css gives every element a
+// near-zero transition (property `all`), so the strip's colour would ease
+// rather than switch, and could be sampled part-way.
+const TINT_CLASS = "pointer-events-none fixed inset-x-0 top-0 z-[60] hidden bg-card transition-none coarse:block";
+/** Frames to wait for the theme class before replacing the strip anyway. */
+const MAX_TINT_WAIT_FRAMES = 10;
+
+/** A fresh status-bar strip, replacing any old one. */
+export function replaceStatusBarTint(doc: Document = document): HTMLElement {
+  doc.querySelectorAll(`[${STATUS_BAR_TINT_ATTR}]`).forEach((el) => el.remove());
+  const strip = doc.createElement("div");
+  strip.setAttribute(STATUS_BAR_TINT_ATTR, "");
+  strip.setAttribute("aria-hidden", "true");
+  strip.className = TINT_CLASS;
+  strip.style.height = "max(1px, env(safe-area-inset-top))";
+  doc.body.appendChild(strip);
+  return strip;
+}
+
+/**
+ * Replace the strip in a later animation frame, once <html> carries the
+ * `resolved` theme class. Returns a cancel function.
+ */
+export function scheduleStatusBarTint(
+  resolved: string | undefined,
+  doc: Document = document,
+  raf: (cb: () => void) => number = (cb) => requestAnimationFrame(cb),
+  cancelRaf: (id: number) => void = (id) => cancelAnimationFrame(id),
+): () => void {
+  let id = 0;
+  let frames = 0;
+  const tick = () => {
+    frames++;
+    const ready = !resolved || doc.documentElement.classList.contains(resolved);
+    if (ready || frames >= MAX_TINT_WAIT_FRAMES) replaceStatusBarTint(doc);
+    else id = raf(tick);
+  };
+  id = raf(tick);
+  return () => cancelRaf(id);
+}
