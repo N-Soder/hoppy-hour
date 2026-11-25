@@ -18,6 +18,7 @@ const MESSAGES = {
     "Reading photos is paused until tomorrow — it's been a busy day. You can still type the deal in below.",
   limited:
     "That's a lot of photos for now — try again later, or type the deal in below.",
+  unavailable: "Photo reading is unavailable right now — please type the deal in below.",
   heic:
     "That photo is in HEIC format, which this browser can't open. Try a screenshot of the menu, or a JPEG or PNG.",
   unreadable: "We couldn't open that image. Try another photo, or type the deal in below.",
@@ -112,6 +113,7 @@ export function SnapMenu({ getToken, getHoneypot, onRead, onRemove, attached, on
       if (status === 0) return show("error", navigator.onLine ? MESSAGES.failed : MESSAGES.offline);
       if (message === PHOTO_ERRORS.paused) return show("info", MESSAGES.paused);
       if (message === PHOTO_ERRORS.rateLimited) return show("info", MESSAGES.limited);
+      if (message === PHOTO_ERRORS.unavailable) return show("info", MESSAGES.unavailable);
       if (status === 403) return show("error", MESSAGES.check);
       if (status === 413) return show("error", MESSAGES.tooLarge);
       if (status === 400 || status === 415) return show("error", MESSAGES.unreadable);

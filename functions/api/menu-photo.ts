@@ -11,9 +11,13 @@
 //
 // The site-wide counter is only spent by verified, well-formed requests, so
 // token-less junk can't pause the feature for everyone.
+//
+// Every limit here fails CLOSED: if KV can't be read or written, the read is
+// refused (503 photo_unavailable) and the person uses the normal form. Model
+// spend is never unguarded. (Other rateLimit callers still fail open.)
 import type { Env } from "../_shared/db";
 import { error, json, readJson } from "../_shared/http";
-import { clientIp, peekDailyCap, rateLimit, takeDailyCap } from "../_shared/rate-limit";
+import { clientIp, peekDailyCap, rateLimitStatus, takeDailyCap, type LimitStatus } from "../_shared/rate-limit";
 import { verifyTurnstile } from "../_shared/turnstile";
 import { decodeImage, extractMenu, toPhotoPrefill } from "../_shared/menu-extract";
 import { createPhotoUpload } from "../_shared/photo-upload";
@@ -34,6 +38,14 @@ const NOTHING_FOUND: MenuPhotoResult = {
   deals: [],
 };
 
+/** Map a limit check to a refusal, or null to carry on. */
+function refusal(status: LimitStatus, limited: string): Response | null {
+  if (status === "ok") return null;
+  if (status === "limited") return error(limited, 429);
+  console.error("photo read refused: rate-limit store unavailable");
+  return error(PHOTO_ERRORS.unavailable, 503);
+}
+
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   // Base64 inflates the 3MB image cap by 4/3; leave headroom for the token.
   const body = await readJson<MenuPhotoInput>(request, 5 * 1024 * 1024);
@@ -46,18 +58,21 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   }
 
   // 2. Feature paused for today? Answer before using anyone's quota.
-  if (!(await peekDailyCap(env.RATE_LIMIT, "photo_read", PHOTO_READS_SITE_PER_DAY))) {
-    return error(PHOTO_ERRORS.paused, 429);
-  }
+  const paused = refusal(await peekDailyCap(env.RATE_LIMIT, "photo_read", PHOTO_READS_SITE_PER_DAY), PHOTO_ERRORS.paused);
+  if (paused) return paused;
 
   // 3. Per-IP limits. Hour first: once the day is used up the hourly count no
   // longer matters.
-  if (
-    !(await rateLimit(env.RATE_LIMIT, "photo_read", ip, PHOTO_READS_PER_HOUR, "hour")) ||
-    !(await rateLimit(env.RATE_LIMIT, "photo_read", ip, PHOTO_READS_PER_DAY, "day"))
-  ) {
-    return error(PHOTO_ERRORS.rateLimited, 429);
-  }
+  const hourly = refusal(
+    await rateLimitStatus(env.RATE_LIMIT, "photo_read", ip, PHOTO_READS_PER_HOUR, "hour"),
+    PHOTO_ERRORS.rateLimited,
+  );
+  if (hourly) return hourly;
+  const daily = refusal(
+    await rateLimitStatus(env.RATE_LIMIT, "photo_read", ip, PHOTO_READS_PER_DAY, "day"),
+    PHOTO_ERRORS.rateLimited,
+  );
+  if (daily) return daily;
 
   // 4. Turnstile (single-use token; the final submit needs its own).
   if (!(await verifyTurnstile(
@@ -71,9 +86,8 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   if (!image.ok) return error(image.message, image.status);
 
   // 6. Site-wide spend, counted only now that the request is real.
-  if (!(await takeDailyCap(env.RATE_LIMIT, "photo_read", PHOTO_READS_SITE_PER_DAY))) {
-    return error(PHOTO_ERRORS.paused, 429);
-  }
+  const capped = refusal(await takeDailyCap(env.RATE_LIMIT, "photo_read", PHOTO_READS_SITE_PER_DAY), PHOTO_ERRORS.paused);
+  if (capped) return capped;
 
   // 7. Read it.
   const result = await extractMenu(env.ANTHROPIC_API_KEY, image, MAX_TOKENS);

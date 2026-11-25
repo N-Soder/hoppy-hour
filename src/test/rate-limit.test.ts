@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { peekDailyCap, rateLimit, takeDailyCap, utcDate } from "../../functions/_shared/rate-limit";
+import { peekDailyCap, rateLimit, rateLimitStatus, takeDailyCap, utcDate } from "../../functions/_shared/rate-limit";
 import { fakeKv } from "./helpers/fake-bindings";
 
 const kvOf = (kv: ReturnType<typeof fakeKv>) => kv as unknown as KVNamespace;
@@ -52,9 +52,17 @@ describe("rateLimit windows", () => {
     expect(await rateLimit(kvOf(kv), "b", "5.6.7.8", 3, "minute")).toBe(true);
   });
 
-  it("fails open when KV throws", async () => {
+  it("rateLimit (existing callers) still fails open when KV throws", async () => {
     const kv = { get: async () => { throw new Error("kv down"); } } as unknown as KVNamespace;
     expect(await rateLimit(kv, "b", "ip", 1, "day")).toBe(true);
+    expect(await rateLimit(kv, "b", "ip", 1)).toBe(true);
+  });
+
+  it("rateLimitStatus reports KV read and write failures as 'error' so callers can fail closed", async () => {
+    const down = { get: async () => { throw new Error("kv down"); } } as unknown as KVNamespace;
+    expect(await rateLimitStatus(down, "b", "ip", 1, "hour")).toBe("error");
+    const readOnly = { get: async () => null, put: async () => { throw new Error("429 too many writes"); } } as unknown as KVNamespace;
+    expect(await rateLimitStatus(readOnly, "b", "ip", 5, "day")).toBe("error");
   });
 });
 
@@ -62,13 +70,19 @@ describe("daily site-wide cap", () => {
   it("counts per UTC date and stops at max", async () => {
     vi.useFakeTimers({ now: new Date("2026-11-25T12:00:00Z") });
     const kv = fakeKv();
-    for (let i = 0; i < 3; i++) expect(await takeDailyCap(kvOf(kv), "photo_read", 3)).toBe(true);
-    expect(await takeDailyCap(kvOf(kv), "photo_read", 3)).toBe(false);
-    expect(await peekDailyCap(kvOf(kv), "photo_read", 3)).toBe(false);
+    for (let i = 0; i < 3; i++) expect(await takeDailyCap(kvOf(kv), "photo_read", 3)).toBe("ok");
+    expect(await takeDailyCap(kvOf(kv), "photo_read", 3)).toBe("limited");
+    expect(await peekDailyCap(kvOf(kv), "photo_read", 3)).toBe("limited");
     expect(kv.store.get("cap:photo_read:2026-11-25")?.value).toBe("3");
     vi.setSystemTime(new Date("2026-11-26T00:00:01Z"));
-    expect(await peekDailyCap(kvOf(kv), "photo_read", 3)).toBe(true);
-    expect(await takeDailyCap(kvOf(kv), "photo_read", 3)).toBe(true);
+    expect(await peekDailyCap(kvOf(kv), "photo_read", 3)).toBe("ok");
+    expect(await takeDailyCap(kvOf(kv), "photo_read", 3)).toBe("ok");
+  });
+
+  it("reports KV failures as 'error'", async () => {
+    const down = { get: async () => { throw new Error("kv down"); } } as unknown as KVNamespace;
+    expect(await peekDailyCap(down, "x", 1)).toBe("error");
+    expect(await takeDailyCap(down, "x", 1)).toBe("error");
   });
 
   it("peek never counts", async () => {

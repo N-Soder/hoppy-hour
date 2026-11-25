@@ -17,6 +17,7 @@ vi.mock("@anthropic-ai/sdk", () => {
 
 import { onRequestPost } from "../../functions/api/menu-photo";
 import { onRequestPost as submitPost } from "../../functions/api/submissions";
+import { onRequestPost as adminFromImage } from "../../functions/api/admin/submissions/from-image";
 
 const modelSays = (body: unknown) =>
   create.mockResolvedValue({ stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify(body) }] });
@@ -166,6 +167,32 @@ describe("POST /api/menu-photo", () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["KV reads fail", (kv: ReturnType<typeof fakeKv>) => kv.get.mockRejectedValue(new Error("kv down"))],
+    ["KV writes fail", (kv: ReturnType<typeof fakeKv>) => kv.put.mockRejectedValue(new Error("kv write limit"))],
+  ])("fails closed when %s: 503 photo_unavailable, no Turnstile, no model", async (_label, breakKv) => {
+    const { env, kv } = setup();
+    breakKv(kv);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { status, body } = await read(env);
+    expect(status).toBe(503);
+    expect(body).toEqual({ error: "photo_unavailable" });
+    expect(calls).toEqual([]);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when only the site-wide count can't be written", async () => {
+    const { env, kv } = setup();
+    const put = kv.put.getMockImplementation()!;
+    kv.put.mockImplementation(async (key: string, value: string, opts?: { expirationTtl?: number }) => {
+      if (key.startsWith("cap:")) throw new Error("kv write limit");
+      return put(key, value, opts);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await read(env)).status).toBe(503);
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("maps an API failure to a 5xx without storing anything", async () => {
     const { env, r2 } = setup();
     create.mockRejectedValue(new Error("boom"));
@@ -190,6 +217,24 @@ describe("photo read -> POST /api/submissions with upload_id", () => {
     const key = bound.find((v) => typeof v === "string" && v.startsWith("submissions/"));
     expect(key).toMatch(/^submissions\/[0-9a-f-]{36}\.jpg$/);
     expect([...r2.store.keys()]).toEqual([key]);
+  });
+
+  it("claimed photo leaves pending/ (lifecycle-expired) for a permanent submissions/ key", async () => {
+    const { env, r2 } = setup();
+    const { body } = await read(env);
+    expect([...r2.store.keys()][0]).toMatch(/^pending\//);
+    await submitPost({ ...req("/api/submissions", { ...form, upload_id: body.upload_id }), env } as never);
+    const imageKey = bound.find((v) => typeof v === "string" && /\.(jpg|png|webp)$/.test(v)) as string;
+    expect(imageKey.startsWith("submissions/")).toBe(true);
+    expect([...r2.store.keys()].some((k) => k.startsWith("pending/"))).toBe(false);
+    expect([...r2.store.keys()]).toEqual([imageKey]);
+  });
+
+  it("an unclaimed read stays under pending/ only", async () => {
+    const { env, r2 } = setup();
+    await read(env);
+    await read(env);
+    expect([...r2.store.keys()].every((k) => k.startsWith("pending/"))).toBe(true);
   });
 
   it("still validates the fields — a read can't bypass validation", async () => {
@@ -222,5 +267,23 @@ describe("photo read -> POST /api/submissions with upload_id", () => {
     const res = (await submitPost({ ...req("/api/submissions", form), env } as never)) as Response;
     expect(res.status).toBe(201);
     expect(bound.slice(-2)).toEqual(["form", null]);
+  });
+});
+
+describe("admin Snap-a-Deal storage", () => {
+  it("stores straight under submissions/, never pending/", async () => {
+    const { env, r2 } = setup();
+    const row = { id: "x", venue_name: "The Crown", days_of_week: "[]", tags: "[]", extra_deals: "[]", status: "pending", created_at: "now" };
+    env.DB.prepare = vi.fn(() => ({
+      bind: vi.fn(() => ({ run: async () => ({}), first: async () => row })),
+    })) as never;
+    const res = (await adminFromImage({
+      ...req("/api/admin/submissions/from-image", { image_base64: b64(MAGIC.jpeg), media_type: "image/jpeg" }),
+      env,
+    } as never)) as Response;
+    expect(res.status).toBe(201);
+    const keys = [...r2.store.keys()];
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toMatch(/^submissions\/[0-9a-f-]{36}\.jpg$/);
   });
 });

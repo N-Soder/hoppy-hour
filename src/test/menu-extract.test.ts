@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { decodeImage, sniffImageType, toPhotoPrefill } from "../../functions/_shared/menu-extract";
+import { decodeImage, sniffImageType, SYSTEM_PROMPT, toPhotoPrefill } from "../../functions/_shared/menu-extract";
+import { DEAL_TEXT_FORMAT } from "../../functions/_shared/deal-text";
 import { MAGIC, b64 } from "./helpers/fake-bindings";
 
 describe("sniffImageType (magic bytes)", () => {
@@ -63,5 +64,11 @@ describe("toPhotoPrefill", () => {
     const deal = { days_of_week: [1], start_time: "16:00", end_time: "18:00", description: "x" };
     const p = toPhotoPrefill({ venue_name: null, venue_address: null, notes: null, deals: Array(12).fill(deal) });
     expect(p.deals).toHaveLength(7);
+  });
+});
+
+describe("photo extraction prompt", () => {
+  it("uses the shared deal-text format (admin and public reads)", () => {
+    expect(SYSTEM_PROMPT).toContain(DEAL_TEXT_FORMAT);
   });
 });

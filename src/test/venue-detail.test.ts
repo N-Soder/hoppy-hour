@@ -62,7 +62,7 @@ describe("VenueDetail deals", () => {
       expect.stringContaining("9 pm–late"),
     ]);
     expect(items[0]).toContain("Mon–Fri");
-    expect(items[1]).toContain("Tuesdays only");
+    expect(items[1]).toContain("Tue only");
 
     // A deal shown under Today is not printed again below.
     const other = section("Other days");
@@ -92,5 +92,39 @@ describe("VenueDetail with no deal on the day", () => {
     });
     expect(within(section("Today")).getByText("No deals today")).toBeInTheDocument();
     expect(within(section("Other days")).getByText("Wed")).toBeInTheDocument();
+  });
+});
+
+describe("VenueDetail deal text", () => {
+  it("lists each '; ' offer on its own line with its price, the title above, and tags as text", () => {
+    const deal = {
+      ...hh("d", [3], "17:30", "19:00", "Wine Wednesday: $9.00 pints of Great Northern; $5.00 glasses of red; Free snacks"),
+      tags: ["beer", "wine"],
+    };
+    renderDetail(2, true, {
+      venue: { ...venue, happy_hours: [deal] },
+      status: { isLive: false, liveCount: 0, nextLabel: null, dealCount: 1 },
+    });
+    const other = section("Other days");
+    expect(within(other).getByRole("heading", { level: 4, name: "Wed" })).toBeInTheDocument();
+    expect(within(other).getByText("5:30–7 pm")).toBeInTheDocument();
+    expect(within(other).getByText("Wine Wednesday")).toBeInTheDocument();
+    const offers = within(other)
+      .getAllByRole("list")
+      .find((ul) => ul.querySelector(":scope > li > span"))!;
+    expect(within(offers).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "$9 pints of Great Northern",
+      "$5 glasses of red",
+      "Free snacks",
+    ]);
+    expect(within(other).getByText("Beer · Wine")).toBeInTheDocument();
+  });
+
+  it("keeps a comma-separated description on one line", () => {
+    renderDetail(2, true, {
+      venue: { ...venue, happy_hours: [hh("d", [3], "17:00", "19:00", "$8 beer and wine, $15 select cocktails")] },
+      status: { isLive: false, liveCount: 0, nextLabel: null, dealCount: 1 },
+    });
+    expect(within(section("Other days")).getByText("beer and wine, $15 select cocktails")).toBeInTheDocument();
   });
 });

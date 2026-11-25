@@ -128,6 +128,13 @@ describe("Snap a menu on the public submit form", () => {
     expect(screen.getByRole("button", { name: /submit deal/i })).toBeEnabled();
   });
 
+  it("explains when photo reading is unavailable (limits couldn't be checked)", async () => {
+    photoResponse = { status: 503, body: { error: "photo_unavailable" } };
+    renderSubmit();
+    pickPhoto();
+    await screen.findByText(/Photo reading is unavailable right now/);
+  });
+
   it("keeps a typed venue, opens an incomplete read deal instead of sending it, then submits with upload_id", async () => {
     // "Suggest an edit" link fills venue + location, so only the deals are in play.
     window.history.pushState({}, "", "/submit?venue_name=Ezra+Pound&country=AU&city=Perth&lat=-31.95&lng=115.86");

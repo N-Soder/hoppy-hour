@@ -5,6 +5,7 @@
 // decides what to do with the result.
 import Anthropic, { APIError, RateLimitError } from "@anthropic-ai/sdk";
 import { EXTRACTION_SCHEMA, type ExtractedMenu } from "./extract";
+import { DEAL_TEXT_FORMAT } from "./deal-text";
 import { isValidTime } from "./validate";
 import {
   MAX_DEALS_PER_SUBMISSION,
@@ -28,9 +29,11 @@ Rules:
 - days_of_week uses 0=Sunday through 6=Saturday. "Weekdays" means [1,2,3,4,5]; "weekends" means [0,6]; "daily"/"every day" means [0,1,2,3,4,5,6]. If days are not stated, use an empty array — never guess.
 - Times are 24-hour HH:MM. "4-7pm" is start 16:00, end 19:00. If a time is not stated, use an empty string — never guess.
 - Create one deal per distinct time window or day set. Deals sharing the same days and times belong in ONE deal with a combined description.
-- Descriptions should be concise and keep the prices, e.g. "$5 pints and half-price cocktails".
+- Write each description in the deal description format below, keeping every price, size and condition shown.
 - venue_name / venue_address: only what is actually visible in the image, else null. Do not infer a venue from logos alone unless the name is legible.
-- Put anything ambiguous or unreadable in notes so a human reviewer can double-check.`;
+- Put anything ambiguous or unreadable in notes so a human reviewer can double-check.
+
+${DEAL_TEXT_FORMAT}`;
 
 /** A failure to hand straight back to the client as `error(message, status)`. */
 export interface ExtractFailure {
