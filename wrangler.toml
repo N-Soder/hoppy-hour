@@ -21,9 +21,15 @@ database_id = "326075ab-7bf2-4741-b3f3-073a8f39567b"
 binding = "RATE_LIMIT"
 id = "8c0344a00ac84a89ad3f152e51fd0531"
 
-# Compressed photos from admin Snap-a-Deal submissions (~150-300KB each after
-# client-side compression). Create the bucket once before deploying:
+# Compressed photos from Snap-a-Deal (admin) and "Snap a menu" (public submit
+# form) submissions (~150-300KB each after client-side compression). Private:
+# only GET /api/admin/submissions/:id/image (behind Access) serves them.
+# Create the bucket once before deploying:
 #   npx wrangler r2 bucket create hoppy-hour-submission-images
+# Public photo reads are stored under pending/ until the submit claims them
+# (moved to submissions/). Unclaimed ones are removed by a lifecycle rule, set
+# up once:
+#   npx wrangler r2 bucket lifecycle add hoppy-hour-submission-images expire-unclaimed-photos pending/ --expire-days 1
 # Local dev (`wrangler pages dev`) simulates the bucket automatically.
 [[r2_buckets]]
 binding = "SUBMISSION_IMAGES"

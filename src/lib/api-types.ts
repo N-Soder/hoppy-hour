@@ -82,7 +82,10 @@ export interface Submission {
   /** Deals beyond the first (which is in the fields above). */
   extra_deals: SubmissionDeal[];
   status: "pending" | "approved" | "rejected";
-  /** 'form' = public submit form; 'photo' = admin Snap-a-Deal photo upload. */
+  /**
+   * 'form' = public submit form; 'photo' = sent with a menu photo (admin
+   * Snap-a-Deal, or the public form's "Snap a menu").
+   */
   source: "form" | "photo";
   /** R2 object key of the compressed photo (photo submissions only). */
   image_key: string | null;
@@ -119,7 +122,54 @@ export interface SubmissionInput {
   extra_deals: SubmissionDeal[];
   honeypot: string;
   turnstile_token: string;
+  /**
+   * Opaque id from POST /api/menu-photo when the form was pre-filled from a
+   * photo: attaches that photo (stored as source='photo'). Single use, expires
+   * after an hour, only valid from the IP that uploaded it.
+   */
+  upload_id?: string | null;
 }
+
+/** Body for POST /api/menu-photo (public "Snap a menu" read). */
+export interface MenuPhotoInput {
+  /** Base64-encoded, canvas re-encoded (metadata-free) image, no data: prefix. */
+  image_base64: string;
+  media_type: "image/jpeg" | "image/png" | "image/webp";
+  turnstile_token: string;
+  honeypot: string;
+}
+
+/** One deal read from a menu photo. Empty values = not stated on the menu. */
+export interface PhotoPrefillDeal {
+  days_of_week: number[];
+  /** 'HH:MM', or "" when the photo doesn't say. */
+  start_time: string;
+  end_time: string;
+  description: string;
+}
+
+/** Response of POST /api/menu-photo. */
+export interface MenuPhotoResult {
+  /** False when the model found no deal in the photo (nothing is stored). */
+  found: boolean;
+  /** Send back as SubmissionInput.upload_id; null when nothing was found. */
+  upload_id: string | null;
+  /** Seconds until upload_id stops working. */
+  expires_in: number | null;
+  venue_name: string | null;
+  venue_address: string | null;
+  deals: PhotoPrefillDeal[];
+}
+
+/** Error strings POST /api/menu-photo and the photo claim can answer with. */
+export const PHOTO_ERRORS = {
+  /** Site-wide daily cap reached (429). */
+  paused: "photo_paused",
+  /** Per-IP hourly/daily limit reached (429). */
+  rateLimited: "photo_rate_limited",
+  /** upload_id expired, already used, or sent from another IP (410). */
+  expired: "photo_expired",
+} as const;
 
 /** Coordinates + resolved country from the geocode proxy. */
 export interface Coords {

@@ -1,11 +1,13 @@
 // POST /api/submissions — public deal submission.
 // Order: honeypot (cheapest, silent success) -> rate limit -> Turnstile -> field
-// validation -> insert. Replaces the direct RLS insert and consolidates spam
+// validation -> claim the photo (only when `upload_id` is sent) -> insert. Replaces the direct RLS insert and consolidates spam
 // defence server-side.
 import type { Env } from "../_shared/db";
 import { toHms } from "../_shared/db";
 import { error, json, readJson } from "../_shared/http";
 import { clientIp, rateLimit } from "../_shared/rate-limit";
+import { verifyTurnstile } from "../_shared/turnstile";
+import { claimPhotoUpload } from "../_shared/photo-upload";
 import {
   normalizeTags,
   validateDealFields,
@@ -15,50 +17,9 @@ import {
   isCountryCode,
   isLatLng,
 } from "../_shared/validate";
-import { MAX_DEALS_PER_SUBMISSION, type SubmissionInput } from "../../src/lib/api-types";
+import { MAX_DEALS_PER_SUBMISSION, PHOTO_ERRORS, type SubmissionInput } from "../../src/lib/api-types";
 
 const SUBMIT_LIMIT_PER_MIN = 3;
-
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-
-/**
- * Server-side Turnstile check. Besides `success`, the token must have been
- * solved on the host this request arrived at, so a token minted on another
- * site that embeds our sitekey can't be replayed here. Loopback hosts skip the
- * hostname match: Cloudflare's test keys report a placeholder hostname.
- * Failures are logged (Pages real-time logs) so a rotated or broken secret
- * shows up as `turnstile siteverify failed` instead of a silently dead form.
- */
-export async function verifyTurnstile(
-  secret: string,
-  token: string,
-  ip: string,
-  expectedHost: string,
-): Promise<boolean> {
-  const form = new FormData();
-  form.set("secret", secret);
-  form.set("response", token);
-  form.set("remoteip", ip);
-  try {
-    const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
-      method: "POST",
-      body: form,
-    });
-    const data = await res.json<{ success?: boolean; hostname?: string; "error-codes"?: string[] }>();
-    if (data.success !== true) {
-      console.warn("turnstile siteverify failed", data["error-codes"] ?? []);
-      return false;
-    }
-    if (!LOOPBACK_HOSTS.has(expectedHost) && data.hostname !== expectedHost) {
-      console.warn("turnstile hostname mismatch", { got: data.hostname, expected: expectedHost });
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.error("turnstile siteverify unreachable", err);
-    return false;
-  }
-}
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const body = await readJson<SubmissionInput>(request);
@@ -107,13 +68,29 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     tags: normalizeTags(d.tags),
   }));
 
+  // 5. Photo from "Snap a menu" (POST /api/menu-photo). Claimed only after
+  // everything else passed, so a validation error doesn't spend the upload.
+  // The fields themselves came through validation above like any typed
+  // submission — the model's read never reaches the table unchecked.
+  const submissionId = crypto.randomUUID();
+  let imageKey: string | null = null;
+  if (body.upload_id != null && body.upload_id !== "") {
+    const claim = await claimPhotoUpload(env, body.upload_id, ip, submissionId);
+    if (!claim.ok) {
+      if (claim.reason === "invalid") return error("upload_id is malformed", 400);
+      if (claim.reason === "ip_mismatch") console.warn("photo upload claimed from another IP");
+      return error(PHOTO_ERRORS.expired, 410);
+    }
+    imageKey = claim.imageKey;
+  }
+
   await env.DB.prepare(
     `INSERT INTO submissions (id, venue_name, venue_address, city, country, lat, lng,
                               days_of_week, start_time, end_time, description, tags,
-                              extra_deals, status)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'pending')`,
+                              extra_deals, status, source, image_key)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'pending', ?14, ?15)`,
   ).bind(
-    crypto.randomUUID(),
+    submissionId,
     body.venue_name,
     body.venue_address && body.venue_address.trim() ? body.venue_address.trim() : "",
     body.city,
@@ -126,6 +103,8 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     body.description,
     JSON.stringify(normalizeTags(body.tags)),
     JSON.stringify(extraDeals),
+    imageKey ? "photo" : "form",
+    imageKey,
   ).run();
 
   return json({ ok: true }, 201);

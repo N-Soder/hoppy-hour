@@ -94,7 +94,8 @@ Hosted entirely on **Cloudflare** — Pages, Pages Functions, D1, KV, and R2.
 - `geo` — best-effort visitor country from Cloudflare's edge (`cf-ipcountry`), used to prefill the submit form
 - `geocode` — rate-limited Mapbox geocoding proxy
 - `mapbox-token` — serves the public Mapbox token to the browser (its abuse control is the token's URL restriction in the Mapbox dashboard)
-- `submissions` — public submission intake (honeypot + Turnstile anti-bot)
+- `submissions` — public submission intake (honeypot + Turnstile anti-bot); attaches a "Snap a menu" photo via a single-use `upload_id`
+- `menu-photo` — public "Snap a menu": reads a menu photo with Anthropic vision to pre-fill the submit form (honeypot, Turnstile, 5/hour + 20/day per IP, 200/day site-wide, magic-byte check); the photo is stored privately in R2 for reviewers
 - `admin/*` — venue/happy-hour management and submission moderation, including Snap-a-Deal photo intake (R2 + Anthropic vision extraction)
 
 **Auth & access control:** `/admin` and `/api/admin/*` sit behind **Cloudflare Access**; `functions/api/admin/_middleware.ts` independently verifies the signed `Cf-Access-Jwt-Assertion` JWT (issuer + audience) and rejects cross-site writes as defence-in-depth.
@@ -124,7 +125,7 @@ npm run build && npx wrangler pages dev dist --port 8788   # Functions + local D
 npm run dev                                                 # Vite on http://localhost:8080, proxies /api → :8788
 ```
 
-The example files use Cloudflare's always-pass Turnstile **test** keys, and `DEV_BYPASS_ACCESS=1` opens `/admin` locally. That bypass only applies to `localhost` requests, so it can never open a deployed site. The admin Snap-a-Deal photo feature also needs `ANTHROPIC_API_KEY` in `.dev.vars`.
+The example files use Cloudflare's always-pass Turnstile **test** keys, and `DEV_BYPASS_ACCESS=1` opens `/admin` locally. That bypass only applies to `localhost` requests, so it can never open a deployed site. The photo features (admin Snap-a-Deal and the public "Snap a menu") also need `ANTHROPIC_API_KEY` in `.dev.vars`.
 
 **Scripts:**
 
@@ -149,7 +150,7 @@ npm run test       # Vitest
 
 1. `npx wrangler d1 create hoppy-hour-db`, then put the new `database_id` in `wrangler.toml` and apply `db/schema.sql` with `--remote`.
 2. `npx wrangler kv namespace create RATE_LIMIT`, then put the new `id` in `wrangler.toml`.
-3. `npx wrangler r2 bucket create hoppy-hour-submission-images` (keep it private).
+3. `npx wrangler r2 bucket create hoppy-hour-submission-images` (keep it private), then `npx wrangler r2 bucket lifecycle add hoppy-hour-submission-images expire-unclaimed-photos pending/ --expire-days 1` so photos read but never submitted are deleted.
 4. Create a Cloudflare Access application covering `/admin` and `/api/admin/*`, then set `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` in `wrangler.toml`.
 5. Create a Turnstile widget. The site key is compiled into the client bundle, so it must be set wherever the build runs: put `VITE_TURNSTILE_SITE_KEY` in a local `.env.production.local` for `npm run deploy`, or in the Pages **build** environment variables for a Git-connected project. Add the secret as a Pages secret.
 6. Add the secrets: `npx wrangler pages secret put MAPBOX_ACCESS_TOKEN` (and `TURNSTILE_SECRET_KEY`, `ANTHROPIC_API_KEY`). Restrict the Mapbox token to your site's URLs. Optionally, also add a second, server-only token as `MAPBOX_GEOCODE_TOKEN`: `/api/geocode` then uses it instead of the public map token, and stops sending a Referer to get past that token's URL restriction. Set a usage alert in Mapbox either way.
