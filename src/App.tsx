@@ -18,11 +18,25 @@ const queryClient = new QueryClient();
 /** Keep the browser-chrome color (mobile status bar / PWA titlebar) in sync
     with the theme chosen in the app. See lib/theme-color. */
 function ThemeColorSync() {
-  const { theme } = useTheme();
+  const { theme, resolvedTheme } = useTheme();
   useEffect(() => {
+    // Also on resolvedTheme: a system change while "system" is chosen
+    // re-inserts the metas, so the browser looks at them again.
     applyThemeColor(theme as ThemeChoice);
-  }, [theme]);
-  return null;
+  }, [theme, resolvedTheme]);
+  // Safari on iOS 26 ignores theme-color and tints the status bar from a
+  // fixed element at the top edge, sampled when such an element appears. This
+  // strip, in the header colour, is re-created on every theme change so the
+  // tint is sampled again rather than kept from before the switch.
+  return (
+    <div
+      key={resolvedTheme ?? "unknown"}
+      aria-hidden="true"
+      data-status-bar-tint=""
+      className="pointer-events-none fixed inset-x-0 top-0 z-[60] hidden bg-card coarse:block"
+      style={{ height: "max(1px, env(safe-area-inset-top))" }}
+    />
+  );
 }
 
 /** Tell the service-worker updater about in-app page changes (not filter or

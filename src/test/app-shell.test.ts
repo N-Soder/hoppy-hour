@@ -5,7 +5,7 @@ import { createElement } from "react";
 import { render } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { THEME_COLORS, applyThemeColor, themeColorContents } from "@/lib/theme-color";
+import { DARK_MEDIA, LIGHT_MEDIA, THEME_COLORS, applyThemeColor, themeColorMetas } from "@/lib/theme-color";
 import { DEFAULT_TITLE, pageTitle, useDocumentTitle, useNoIndex } from "@/hooks/use-document-title";
 import { PHONE_QUERY, SHORT_TOUCH_QUERY } from "@/hooks/use-mobile";
 import tailwindConfig from "../../tailwind.config";
@@ -18,22 +18,57 @@ describe("theme-color", () => {
       <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000">`;
     return doc;
   }
-  const contents = (doc: Document) =>
-    [...doc.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')].map((m) => m.content);
+  const metas = (doc: Document) => [...doc.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')];
+  const described = (doc: Document) => metas(doc).map((m) => `${m.getAttribute("media") ?? "any"} ${m.content}`);
 
   it("follows the system with per-scheme values when the theme is system", () => {
     const doc = headWithMetas();
     applyThemeColor("system", doc);
-    expect(contents(doc)).toEqual([THEME_COLORS.light, THEME_COLORS.dark]);
-    expect(themeColorContents(undefined)).toEqual(THEME_COLORS);
+    expect(described(doc)).toEqual([`${LIGHT_MEDIA} ${THEME_COLORS.light}`, `${DARK_MEDIA} ${THEME_COLORS.dark}`]);
+    expect(themeColorMetas(undefined)).toEqual(themeColorMetas("system"));
   });
 
-  it("uses the chosen theme's colour for both schemes when the user picked one", () => {
+  it("a picked theme leaves one meta with no media query, so the system setting cannot win over it", () => {
     const doc = headWithMetas();
     applyThemeColor("dark", doc);
-    expect(contents(doc)).toEqual([THEME_COLORS.dark, THEME_COLORS.dark]);
+    expect(described(doc)).toEqual([`any ${THEME_COLORS.dark}`]);
     applyThemeColor("light", doc);
-    expect(contents(doc)).toEqual([THEME_COLORS.light, THEME_COLORS.light]);
+    expect(described(doc)).toEqual([`any ${THEME_COLORS.light}`]);
+    applyThemeColor("system", doc);
+    expect(described(doc)).toEqual([`${LIGHT_MEDIA} ${THEME_COLORS.light}`, `${DARK_MEDIA} ${THEME_COLORS.dark}`]);
+  });
+
+  it("replaces the metas rather than editing them, so Safari re-reads the colour on a live switch", () => {
+    const doc = headWithMetas();
+    const before = metas(doc);
+    applyThemeColor("dark", doc);
+    applyThemeColor("dark", doc);
+    const after = metas(doc);
+    expect(after).toHaveLength(1);
+    expect(before.some((m) => m.isConnected)).toBe(false);
+    applyThemeColor("dark", doc); // also on a system change while "system" is chosen
+    expect(metas(doc)[0]).not.toBe(after[0]);
+    expect(metas(doc)[0].parentNode).toBe(doc.head);
+  });
+
+  it("index.html's inline theme script does the same before first paint", () => {
+    const html = readFileSync(path.resolve(__dirname, "../../index.html"), "utf8");
+    const script = /<script>([\s\S]*?)<\/script>/.exec(html)![1];
+    for (const [stored, system, expected] of [
+      ["dark", false, [`any ${THEME_COLORS.dark}`]],
+      ["light", true, [`any ${THEME_COLORS.light}`]],
+      ["system", true, [`${LIGHT_MEDIA} ${THEME_COLORS.light}`, `${DARK_MEDIA} ${THEME_COLORS.dark}`]],
+      [null, false, [`${LIGHT_MEDIA} ${THEME_COLORS.light}`, `${DARK_MEDIA} ${THEME_COLORS.dark}`]],
+    ] as const) {
+      const doc = headWithMetas();
+      doc.head.querySelectorAll("meta").forEach((m, i) => (m.content = i === 0 ? THEME_COLORS.light : THEME_COLORS.dark));
+      const win = {
+        localStorage: { getItem: () => stored },
+        matchMedia: () => ({ matches: system }),
+      };
+      new Function("window", "document", "localStorage", script)(win, doc, win.localStorage);
+      expect(described(doc), String(stored)).toEqual(expected);
+    }
   });
 
   it("index.html ships the same colours before any JavaScript runs", () => {

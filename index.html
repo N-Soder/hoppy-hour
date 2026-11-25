@@ -8,8 +8,8 @@
     <link rel="icon" href="/favicon.ico" type="image/x-icon" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <!-- Browser/status-bar colour = the app header (--card) in each theme.
-         The theme script below and src/lib/theme-color.ts override both when
-         the in-app theme differs from the system's. -->
+         The theme script below and src/lib/theme-color.ts replace both with
+         one unscoped meta when a theme is picked in the app. -->
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#221b16" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -30,10 +30,16 @@
             ((!t || t === "system") &&
               window.matchMedia("(prefers-color-scheme: dark)").matches);
           if (dark) document.documentElement.classList.add("dark");
+          // A theme picked in the app: one theme-color meta without a media
+          // query replaces both (see src/lib/theme-color.ts).
           if (t === "light" || t === "dark") {
-            var c = t === "dark" ? "#221b16" : "#ffffff";
             var metas = document.querySelectorAll('meta[name="theme-color"]');
-            for (var i = 0; i < metas.length; i++) metas[i].setAttribute("content", c);
+            var m = document.createElement("meta");
+            m.name = "theme-color";
+            m.content = t === "dark" ? "#221b16" : "#ffffff";
+            if (metas.length) metas[0].parentNode.insertBefore(m, metas[0]);
+            else document.head.appendChild(m);
+            for (var i = 0; i < metas.length; i++) metas[i].parentNode.removeChild(metas[i]);
           }
         } catch (e) {}
       })();
