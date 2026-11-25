@@ -597,11 +597,17 @@ export default function Index() {
           </div>
         )}
 
-        {/* Header + filters (fixed and collapsible on phones, static on desktop) */}
+        {/* Header + filters (fixed and collapsible on phones, static on desktop).
+            bg-card, the header colour, on this fixed box itself: Safari on iOS
+            26+ tints the area behind the status bar from the background of the
+            fixed element at the top edge, and follows a live theme switch only
+            when it is that element's own background that changes (a child's
+            colour is sampled once at load and kept). The rows below the header
+            carry bg-background. */}
         <div
           ref={collapsibleRef}
           style={collapsibleStyle}
-          className="bg-background"
+          className="bg-card"
           onTransitionEnd={() => { isAnimatingRef.current = false; }}
         >
           <header className="flex items-center justify-between gap-2 border-b border-border bg-card px-4 pb-1.5 pt-[calc(0.375rem+env(safe-area-inset-top))] md:px-6 md:pb-3 md:pt-[calc(0.75rem+env(safe-area-inset-top))]">
@@ -628,7 +634,7 @@ export default function Index() {
             </div>
           </header>
 
-          <div className="px-4 pb-2 pt-2.5 md:border-b md:border-border md:py-3">
+          <div className="bg-background px-4 pb-2 pt-2.5 md:border-b md:border-border md:py-3">
             <FiltersPanel
               date={date}
               onDateChange={onDateChange}
@@ -655,7 +661,7 @@ export default function Index() {
 
           {/* Location notice: one dismissible line. role=status so a retry's
               result is heard; the full sentence is read out. */}
-          <div role="status" aria-live="polite" className="border-b border-border md:border-0">
+          <div role="status" aria-live="polite" className="border-b border-border bg-background md:border-0">
             {showLocationNotice && banner && chip && (
               <div className="px-4 pb-2 md:py-2">
                 <div className="flex h-8 items-center gap-2 rounded-full border border-amber-200 bg-amber-50 pl-3 pr-1 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
