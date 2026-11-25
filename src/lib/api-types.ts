@@ -183,3 +183,26 @@ export interface FromImageInput {
   /** ISO 3166-1 alpha-2 country code. */
   country?: string | null;
 }
+
+/** Most descriptions one POST /api/admin/tidy-description call accepts. */
+export const MAX_TIDY_DESCRIPTIONS = 10;
+
+/** Body for POST /api/admin/tidy-description. */
+export interface TidyDescriptionInput {
+  descriptions: string[];
+}
+
+/** One tidied description. `changed: false` means "keep what you have". */
+export interface TidyResult {
+  original: string;
+  /** The suggestion, or the original when nothing changed or the guard refused it. */
+  tidied: string;
+  changed: boolean;
+  /** Why a suggestion was refused (guard failure), for logs and tests. */
+  reason?: string;
+}
+
+/** Response of POST /api/admin/tidy-description, same order as the input. */
+export interface TidyDescriptionResponse {
+  results: TidyResult[];
+}

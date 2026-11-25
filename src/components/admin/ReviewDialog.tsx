@@ -26,7 +26,9 @@ import {
   type CoordInputs, type ReviewPin,
 } from "@/lib/admin";
 import type { ApproveDeal, ApproveInput, ApproveLocationSource, HappyHour, Submission, Venue } from "@/lib/api-types";
+import { useTidySuggestions } from "@/hooks/use-tidy-suggestions";
 import { SubmissionDealList } from "./SubmissionDeals";
+import { TidySuggestion } from "./TidySuggestion";
 
 /** Matches a CSS media query, updating on change. */
 function useMediaQuery(query: string): boolean {
@@ -150,6 +152,12 @@ export default function ReviewDialog({ submission: sub, onClose, onReject, focus
   const [name, setName] = useState(initial.name);
   const [address, setAddress] = useState(initial.address);
   const [deals, setDeals] = useState<ApproveDeal[]>(initial.deals);
+  // Which submitted deal each row came from (rows can be removed), so a tidy
+  // suggestion stays with its deal.
+  const [dealOrigins, setDealOrigins] = useState<number[]>(() => initial.deals.map((_, i) => i));
+  // Origins whose suggestion the reviewer used or declined.
+  const [tidyDismissed, setTidyDismissed] = useState<ReadonlySet<number>>(() => new Set());
+  const tidyFor = useTidySuggestions(sub);
   // Existing venue the reviewer attached this submission to (null = create new).
   const [attachedVenueId, setAttachedVenueId] = useState<string | null>(null);
   // When attached: also apply the name/address/location to the venue row.
@@ -302,7 +310,12 @@ export default function ReviewDialog({ submission: sub, onClose, onReject, focus
         return { ...d, tags: tags.includes(tag) ? tags.filter((t) => t !== tag) : [...tags, tag] };
       }),
     );
-  const removeDeal = (idx: number) => setDeals((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev));
+  const removeDeal = (idx: number) => {
+    if (deals.length <= 1) return;
+    setDeals((prev) => prev.filter((_, i) => i !== idx));
+    setDealOrigins((prev) => prev.filter((_, i) => i !== idx));
+  };
+  const dismissTidy = (origin: number) => setTidyDismissed((prev) => new Set(prev).add(origin));
 
   // ── Approve ───────────────────────────────────────────────────────────────
   const blockers = approveBlockers({
@@ -647,6 +660,11 @@ export default function ReviewDialog({ submission: sub, onClose, onReject, focus
       <div className="space-y-3">
         {deals.map((deal, idx) => {
           const overnight = endsNextDay(deal.start_time, deal.end_time);
+          const origin = dealOrigins[idx];
+          const rawTidy = tidyDismissed.has(origin) ? null : tidyFor(origin);
+          // Nothing to offer once the field already says it.
+          const tidyState =
+            rawTidy?.kind === "suggestion" && rawTidy.text === deal.description.trim() ? null : rawTidy;
           return (
             <fieldset
               key={idx}
@@ -680,6 +698,20 @@ export default function ReviewDialog({ submission: sub, onClose, onReject, focus
                   aria-required="true"
                   value={deal.description}
                   onChange={(e) => updateDeal(idx, { description: e.target.value })}
+                />
+                <TidySuggestion
+                  state={tidyState}
+                  dealLabel={deals.length > 1 ? `deal ${idx + 1}` : "the deal"}
+                  onUse={(text) => {
+                    updateDeal(idx, { description: text });
+                    dismissTidy(origin);
+                    // The row unmounts; keep focus on the field it changed.
+                    document.getElementById(fid(`desc-${idx}`))?.focus();
+                  }}
+                  onKeep={() => {
+                    dismissTidy(origin);
+                    document.getElementById(fid(`desc-${idx}`))?.focus();
+                  }}
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">
