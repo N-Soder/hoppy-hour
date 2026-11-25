@@ -250,7 +250,7 @@ function DealBody({ deal, on, selection }: { deal: GroupedHappyHour; on: boolean
           // Prices share one column (subgrid), so their text lines up.
           <ul className={offerGrid}>
             {offers.map((o, i) => (
-              <Offer key={i} offer={o} as="li" />
+              <Offer key={i} offer={o} as="li" alignToText={offers.some((x) => x.price)} />
             ))}
           </ul>
         )
@@ -269,9 +269,15 @@ const offerGrid = "mt-0.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5"
  * it (wrapping under the text, not the price), else the text full width. Price
  * and text stay in one element so a screen reader reads "$9 pints of …".
  */
-function Offer({ offer, as: Tag }: { offer: DealOffer; as: "li" | "p" }) {
+function Offer({ offer, as: Tag, alignToText = false }: { offer: DealOffer; as: "li" | "p"; alignToText?: boolean }) {
   if (!offer.price) {
-    return <Tag className={cn("col-span-2 break-words", Tag === "p" && "mt-0.5")}>{offer.text}</Tag>;
+    // Beside priced siblings, an unpriced offer ("free pool") lines up with
+    // their text, not under their prices.
+    return (
+      <Tag className={cn("break-words", alignToText ? "col-start-2" : "col-span-2", Tag === "p" && "mt-0.5")}>
+        {offer.text}
+      </Tag>
+    );
   }
   return (
     <Tag className={Tag === "li" ? "col-span-2 grid grid-cols-subgrid" : offerGrid}>
