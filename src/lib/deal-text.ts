@@ -29,7 +29,11 @@ export interface DealText {
 // space and some text. "$6.5" or "$9pints" are not read as a price, so the
 // line stays plain rather than splitting mid-number.
 const AMOUNT = String.raw`\$\d+(?:\.\d{2})?`;
-const PRICE = new RegExp(String.raw`^(${AMOUNT}(?:\s?[-–]\s?${AMOUNT})?)\s+(\S[\s\S]*)$`);
+// "50% off" and "2-for-1" lead an offer the same way a price does.
+const DEAL = String.raw`\d{1,3}% off|\d-for-\d`;
+const PRICE = new RegExp(
+  String.raw`^(${AMOUNT}(?:\s?[-–]\s?${AMOUNT})?|${DEAL})\s+(\S[\s\S]*)$`,
+);
 
 function parseOffer(line: string): DealOffer {
   const m = PRICE.exec(line);

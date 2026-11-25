@@ -20,6 +20,12 @@ describe("splitOffers", () => {
     expect(splitOffers("Bottomless brunch")).toEqual({ offers: [{ text: "Bottomless brunch" }] });
   });
 
+  it("treats a leading '50% off' or '2-for-1' like a price", () => {
+    expect(splitOffers("50% off share plates").offers).toEqual([{ price: "50% off", text: "share plates" }]);
+    expect(splitOffers("$12 spritzes; 2-for-1 cocktails").offers[1]).toEqual({ price: "2-for-1", text: "cocktails" });
+    expect(splitOffers("Up to $4 off pints").offers).toEqual([{ text: "Up to $4 off pints" }]);
+  });
+
   it("reads a price range as one price", () => {
     expect(splitOffers("$8.50-$9.50 select pints").offers).toEqual([
       { price: "$8.50-$9.50", text: "select pints" },
