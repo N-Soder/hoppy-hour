@@ -21,13 +21,28 @@ describe("admin route coverage", () => {
     const offenders = files.filter((f) => {
       if (f.startsWith("api/admin/") || f.startsWith("_shared/")) return false;
       const src = readFileSync(path.join(FUNCTIONS, f), "utf8");
+      // The public "Snap a menu" read calls the vision model (behind Turnstile,
+      // per-IP and site-wide caps) and stores its photo only through
+      // _shared/photo-upload — it never names the bucket itself.
+      const modelKey = f === "api/menu-photo.ts" ? /$^/ : /ANTHROPIC_API_KEY/;
       return (
         /(UPDATE|DELETE FROM|INSERT INTO)\s+(venues|happy_hours)/i.test(src) ||
         /FROM\s+submissions/i.test(src) ||
-        /SUBMISSION_IMAGES|ANTHROPIC_API_KEY/.test(src)
+        /SUBMISSION_IMAGES/.test(src) ||
+        modelKey.test(src)
       );
     });
     expect(offenders).toEqual([]);
+  });
+
+  it("no public route serves stored photos", () => {
+    // Photos are readable only via GET /api/admin/submissions/:id/image.
+    const publicFiles = files.filter((f) => !f.startsWith("api/admin/"));
+    const servers = publicFiles.filter((f) =>
+      /SUBMISSION_IMAGES\.get\(/.test(readFileSync(path.join(FUNCTIONS, f), "utf8")) &&
+      f !== "_shared/photo-upload.ts", // claim copies pending/ -> submissions/ server-side
+    );
+    expect(servers).toEqual([]);
   });
 
   it("no other middleware can run before (and short-circuit around) the admin one", () => {

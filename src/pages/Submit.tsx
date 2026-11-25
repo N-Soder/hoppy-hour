@@ -39,7 +39,7 @@ import { inferTagsFromDescription } from "@/lib/auto-tag";
 import { VALID_TAGS, WEEK_DAYS } from "@/lib/constants";
 import { formatTimeRange } from "@/lib/format";
 import { scrollBehavior } from "@/lib/motion";
-import { MAX_DEALS_PER_SUBMISSION } from "@/lib/api-types";
+import { MAX_DEALS_PER_SUBMISSION, PHOTO_ERRORS, type MenuPhotoResult } from "@/lib/api-types";
 import {
   DEAL_PRESETS,
   migrateLegacyAllDay,
@@ -52,6 +52,8 @@ import {
 } from "@/lib/deal-time";
 import { CountryPicker } from "@/components/submit/CountryPicker";
 import { CitySearch } from "@/components/submit/CitySearch";
+import { SnapMenu } from "@/components/submit/SnapMenu";
+import { dealDraftFromPhoto, isDealComplete } from "@/lib/photo-prefill";
 import { useLocationPrefill } from "@/hooks/use-location-prefill";
 import { computeLocationPrefill } from "@/lib/location-prefill";
 import type { CityResult } from "@/lib/city-search";
@@ -62,6 +64,7 @@ import {
   clearDraft,
   describeDraft,
   formatSavedAt,
+  dealHasContent,
   loadDraft,
   saveDraft,
   type DealDraft,
@@ -111,6 +114,8 @@ const CHECK_FAILED_MESSAGE =
   "We couldn't run the security check. Your deals are safe — give it another go.";
 const OFFLINE_MESSAGE =
   "You're offline, so nothing was sent. Your deals are safe — send them when you're back online.";
+const PHOTO_EXPIRED_MESSAGE =
+  "We couldn't attach your photo — it expired or was already used. Your details are still here: tap Try again to send them without it, or snap the menu again.";
 const UNREACHABLE_MESSAGE =
   "We couldn't reach HoppyHour. Your deals are safe — check your connection and try again.";
 
@@ -170,6 +175,13 @@ function timeRangeLabel(deal: DealDraft): string {
   }
   if (deal.start_time && deal.end_time) return formatTimeRange(deal.start_time, deal.end_time);
   return "No hours yet";
+}
+
+/** The parts of a deal list a person edits, for "has this changed?" checks. */
+function dealsSignature(deals: DealDraft[]): string {
+  return JSON.stringify(
+    deals.map((d) => [[...d.days_of_week].sort(), d.start_time, d.end_time, d.description.trim()]),
+  );
 }
 
 /** Same members, any order. */
@@ -523,6 +535,44 @@ export default function Submit() {
     }
   };
 
+  // ── Snap a menu ─────────────────────────────────────────────────────────
+  // A photo read pre-fills the form; `photoUploadId` attaches the stored photo
+  // to the final submit. It is never part of the saved draft (it expires).
+  const [photoUploadId, setPhotoUploadId] = useState<string | null>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  // Bumped to give "Submit another" a fresh Snap a menu block.
+  const [snapKey, setSnapKey] = useState(0);
+  // What the last photo read put in the deal list (see applyPhotoRead).
+  const lastPhotoDeals = useRef<string | null>(null);
+
+  const applyPhotoRead = (result: MenuPhotoResult) => {
+    // Venue details fill only what's still empty — a typed or suggested-edit
+    // venue wins over the photo's read.
+    if (result.venue_name && !form.getValues("venue_name").trim()) {
+      form.setValue("venue_name", result.venue_name);
+    }
+    if (result.venue_address && !(form.getValues("venue_address") ?? "").trim()) {
+      form.setValue("venue_address", result.venue_address);
+    }
+    // Read deals go after any deals already written; blank ones are dropped.
+    // Deals still exactly as an earlier read left them are replaced rather
+    // than kept, so reading another (or the same) photo doesn't duplicate.
+    const current = [...deals];
+    current[openIndex] = snapshotEditor();
+    const untouchedRead = lastPhotoDeals.current === dealsSignature(current);
+    const kept = untouchedRead ? [] : current.filter(dealHasContent);
+    const read = result.deals.map(dealDraftFromPhoto);
+    const next = [...kept, ...read].slice(0, MAX_DEALS_PER_SUBMISSION);
+    if (next.length > kept.length) {
+      const target = kept.length;
+      setDeals(next);
+      setOpenIndex(target);
+      loadDealIntoEditor(next[target]);
+      lastPhotoDeals.current = dealsSignature(next);
+    }
+    setPhotoUploadId(result.upload_id);
+  };
+
   // Collapsed summary row for a deal that isn't currently being edited.
   const renderDealRow = (deal: DealDraft, i: number) => (
     <div
@@ -672,6 +722,29 @@ export default function Submit() {
     // Honeypot check — bots fill hidden fields (also enforced server-side)
     if (values.honeypot) return;
 
+    // Collapsed deals were validated when they collapsed — except ones read
+    // from a photo, which may still be missing days or hours. Open the first
+    // such deal with its errors showing instead of sending it.
+    const incomplete = deals.findIndex((d, i) => i !== openIndex && !isDealComplete(d));
+    if (incomplete >= 0) {
+      const next = [...deals];
+      next[openIndex] = {
+        days_of_week: values.days_of_week,
+        start_time: values.start_time,
+        end_time: values.end_time,
+        description: values.description,
+        tags: values.tags,
+        activePreset,
+        startMin,
+        endMin,
+      };
+      setDeals(next);
+      setOpenIndex(incomplete);
+      loadDealIntoEditor(next[incomplete]);
+      await validateEditor();
+      return;
+    }
+
     // The open deal comes from the just-validated form values; collapsed deals
     // were each validated when they collapsed. Deal #1 travels in the
     // submission's own fields, the rest in extra_deals.
@@ -746,6 +819,7 @@ export default function Submit() {
         })),
         honeypot: values.honeypot,
         turnstile_token: token,
+        upload_id: photoUploadId,
       });
       clearDraft();
       setSubmitted(true);
@@ -755,6 +829,11 @@ export default function Submit() {
         // Never reached the server: the connection dropped or is down.
         setServerError(navigator.onLine ? UNREACHABLE_MESSAGE : OFFLINE_MESSAGE);
         setCanRetry(navigator.onLine);
+      } else if (status === 410 && err instanceof ApiError && err.message === PHOTO_ERRORS.expired) {
+        // The photo can't be attached any more; the typed details are intact.
+        setPhotoUploadId(null);
+        setServerError(PHOTO_EXPIRED_MESSAGE);
+        setCanRetry(true);
       } else if (status === 429) {
         const msg = "Too many submissions — please wait a minute and try again.";
         setServerError(msg);
@@ -837,6 +916,8 @@ export default function Submit() {
                     setOpenIndex(0);
                     setServerError(null);
                     setCanRetry(false);
+                    setPhotoUploadId(null);
+                    setSnapKey((k) => k + 1);
                     // The submitted draft is already cleared; make sure the
                     // fresh form isn't handed a restore banner for it.
                     setDraftOffer(null);
@@ -914,8 +995,18 @@ export default function Submit() {
                 </AlertDescription>
               </Alert>
             )}
+            <SnapMenu
+              key={snapKey}
+              getToken={requestTurnstileToken}
+              getHoneypot={() => form.getValues("honeypot") ?? ""}
+              onRead={applyPhotoRead}
+              onRemove={() => setPhotoUploadId(null)}
+              attached={photoUploadId !== null}
+              onBusyChange={setPhotoBusy}
+              disabled={submitting || checking || !isOnline}
+            />
             <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit, onInvalid)} className="space-y-6">
+              <form onSubmit={form.handleSubmit(onSubmit, onInvalid)} className="mt-6 space-y-6">
                 {/* Honeypot — hidden from real users and screen readers */}
                 <div className="absolute -left-[9999px] opacity-0 h-0 overflow-hidden" aria-hidden="true" tabIndex={-1}>
                   <FormField
@@ -1309,7 +1400,7 @@ export default function Submit() {
                   type="submit"
                   size="lg"
                   className="w-full gap-2"
-                  disabled={submitting || checking || !isOnline}
+                  disabled={submitting || checking || photoBusy || !isOnline}
                 >
                   {isOnline ? <Send className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
                   {!isOnline

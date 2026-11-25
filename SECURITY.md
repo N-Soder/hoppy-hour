@@ -32,6 +32,11 @@ findings that need a compromised Cloudflare account or admin session.
 - Public submissions go through a honeypot, per-IP rate limiting (KV) and
   **Cloudflare Turnstile**, then server-side validation, before they land in a
   moderation queue. Nothing a visitor submits goes live without admin approval.
+- Public menu-photo reads (`/api/menu-photo`, which spend on the vision model)
+  add per-IP hourly/daily limits and a site-wide daily cap on top of the
+  honeypot and Turnstile, and verify the image's magic bytes. Photos are
+  re-encoded in the browser (dropping EXIF/GPS), stored in a private R2 bucket,
+  referenced only by an opaque single-use id, and viewable only by admins.
 - Secrets (Mapbox token, Turnstile secret, Anthropic API key) are Cloudflare
   Pages secrets and are never committed. The Mapbox token is intentionally
   public (Mapbox GL JS needs it in the browser), so restrict it to your own

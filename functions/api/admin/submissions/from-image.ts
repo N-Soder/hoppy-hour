@@ -14,36 +14,17 @@
 // filled in during review like any form submission. The client re-encodes
 // through a canvas before upload, which also strips EXIF (including any
 // embedded GPS), so no location data rides along uninvited.
-import Anthropic, { APIError, RateLimitError } from "@anthropic-ai/sdk";
 import type { Env } from "../../../_shared/db";
 import { nowIso, rowToSubmission } from "../../../_shared/db";
 import { error, json, readJson } from "../../../_shared/http";
 import { clientIp, rateLimit } from "../../../_shared/rate-limit";
 import { isCountryCode, isLatLng, isOptionalStringLen } from "../../../_shared/validate";
-import { EXTRACTION_SCHEMA, normalizeExtractedDeals, type ExtractedMenu } from "../../../_shared/extract";
-import { DEAL_TEXT_FORMAT } from "../../../_shared/deal-text";
+import { normalizeExtractedDeals } from "../../../_shared/extract";
+import { decodeImage, extractMenu, imageExtension, storeImage } from "../../../_shared/menu-extract";
 import type { FromImageInput } from "../../../../src/lib/api-types";
 
-// Client compresses to ~1500px WebP/JPEG (typically <400KB); anything bigger
-// than this decoded cap means the client-side compression was bypassed.
-const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
-const ALLOWED_MEDIA_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-
-// ~1500px image ≈ 1.6K input tokens on Haiku 4.5 ($1/MTok in, $5/MTok out):
-// a few tenths of a cent per photo.
-const VISION_MODEL = "claude-haiku-4-5";
-
-const SYSTEM_PROMPT = `You extract happy hour deals from photos of menus, chalkboards, posters, and screenshots.
-
-Rules:
-- days_of_week uses 0=Sunday through 6=Saturday. "Weekdays" means [1,2,3,4,5]; "weekends" means [0,6]; "daily"/"every day" means [0,1,2,3,4,5,6]. If days are not stated, use an empty array — never guess.
-- Times are 24-hour HH:MM. "4-7pm" is start 16:00, end 19:00. If a time is not stated, use an empty string — never guess.
-- Create one deal per distinct time window or day set. Deals sharing the same days and times belong in ONE deal with a combined description.
-- Write each description in the deal description format below, keeping every price, size and condition shown.
-- venue_name / venue_address: only what is actually visible in the image, else null. Do not infer a venue from logos alone unless the name is legible.
-- Put anything ambiguous or unreadable in notes so a human reviewer can double-check.
-
-${DEAL_TEXT_FORMAT}`;
+// Image validation, the model call (and its system prompt) and the R2 write
+// live in _shared/menu-extract.ts, shared with the public POST /api/menu-photo.
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   // Cost guard on top of Access: the model call is the expensive part.
@@ -53,16 +34,9 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
   // Base64 inflates the 3MB image cap by 4/3; leave headroom for the other fields.
   const b = await readJson<FromImageInput>(request, 5 * 1024 * 1024);
-  if (!b || typeof b.image_base64 !== "string" || !b.image_base64) {
-    return error("image_base64 is required", 400);
-  }
-  if (!ALLOWED_MEDIA_TYPES.has(b.media_type)) {
-    return error("media_type must be image/jpeg, image/png or image/webp", 400);
-  }
-  // 4 base64 chars = 3 bytes; reject before decoding.
-  if (b.image_base64.length > Math.ceil((MAX_IMAGE_BYTES / 3) * 4)) {
-    return error("image too large (max 3MB) — compression should happen client-side", 413);
-  }
+  if (!b) return error("image_base64 is required", 400);
+  const image = decodeImage(b.image_base64, b.media_type);
+  if (!image.ok) return error(image.message, image.status);
   const hasCoords = b.lat != null || b.lng != null;
   if (hasCoords && !isLatLng(b.lat, b.lng)) {
     return error("lat/lng must both be valid coordinates when provided", 400);
@@ -73,63 +47,18 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     return error("country must be an ISO 3166-1 alpha-2 code", 400);
   }
 
-  let imageBytes: Uint8Array;
-  try {
-    imageBytes = Uint8Array.from(atob(b.image_base64), (c) => c.charCodeAt(0));
-  } catch {
-    return error("image_base64 is not valid base64", 400);
-  }
-  if (imageBytes.byteLength > MAX_IMAGE_BYTES) {
-    return error("image too large (max 3MB)", 413);
-  }
-
   // Extract first, store second: if the model call fails we return the error
   // without leaving an orphaned image in R2.
-  const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
-  let extracted: ExtractedMenu;
-  try {
-    const response = await anthropic.messages.create({
-      model: VISION_MODEL,
-      max_tokens: 2048,
-      system: SYSTEM_PROMPT,
-      output_config: { format: { type: "json_schema", schema: EXTRACTION_SCHEMA } },
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "image", source: { type: "base64", media_type: b.media_type, data: b.image_base64 } },
-            { type: "text", text: "Extract the happy hour deal(s) from this image." },
-          ],
-        },
-      ],
-    });
-    if (response.stop_reason === "refusal") {
-      return error("the model declined to process this image", 422);
-    }
-    const textBlock = response.content.find((block) => block.type === "text");
-    if (!textBlock || textBlock.type !== "text") {
-      return error("extraction returned no result — try a clearer photo", 502);
-    }
-    extracted = JSON.parse(textBlock.text) as ExtractedMenu;
-  } catch (e) {
-    if (e instanceof RateLimitError) {
-      return error("extraction service is rate-limited — try again shortly", 503);
-    }
-    if (e instanceof APIError) {
-      return error(`extraction failed (${e.status ?? "network"})`, 502);
-    }
-    return error("extraction returned malformed data — try again", 502);
-  }
+  const result = await extractMenu(env.ANTHROPIC_API_KEY, image);
+  if (!result.ok) return error(result.message, result.status);
+  const extracted = result.extracted;
 
   const deals = normalizeExtractedDeals(extracted);
   const [first, ...extras] = deals;
 
   const submissionId = crypto.randomUUID();
-  const ext = b.media_type === "image/png" ? "png" : b.media_type === "image/webp" ? "webp" : "jpg";
-  const imageKey = `submissions/${submissionId}.${ext}`;
-  await env.SUBMISSION_IMAGES.put(imageKey, imageBytes, {
-    httpMetadata: { contentType: b.media_type },
-  });
+  const imageKey = `submissions/${submissionId}.${imageExtension(image.mediaType)}`;
+  await storeImage(env.SUBMISSION_IMAGES, imageKey, image.bytes, image.mediaType);
 
   // A typed venue name is ground truth; the model's read is the fallback.
   const typedName = (b.venue_name ?? "").trim();
