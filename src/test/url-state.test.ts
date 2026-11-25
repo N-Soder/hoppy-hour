@@ -5,6 +5,7 @@ import {
   countActiveFilters,
   parseDateParam,
   parseHomeParams,
+  parsePlaceParams,
   serializeHomeParams,
   toDateParam,
   toQueryString,
@@ -14,7 +15,9 @@ const parse = (qs: string) => parseHomeParams(new URLSearchParams(qs));
 
 describe("clearedFilters", () => {
   it("puts every filter back to its default, radius included, and cleans the URL", () => {
-    const params = new URLSearchParams("date=2026-11-28&time=17:30&radius=1000&tags=beer,wine&q=bar&utm_source=x");
+    const params = new URLSearchParams(
+      "date=2026-11-28&time=17:30&radius=1000&place=Sofia&near=23.3219,42.6977&tags=beer,wine&q=bar&utm_source=x",
+    );
     const cleared = clearedFilters(parseHomeParams(params));
     expect(cleared).toEqual(DEFAULT_URL_STATE);
     expect(countActiveFilters(cleared)).toBe(0);
@@ -39,6 +42,7 @@ describe("parseHomeParams", () => {
       date: "2026-11-28",
       time: "17:30",
       radius: 10000,
+      place: null,
       tags: ["beer", "wine"],
       q: "bar",
       view: "map",
@@ -50,6 +54,47 @@ describe("parseHomeParams", () => {
       ...DEFAULT_URL_STATE,
       tags: ["beer"],
     });
+  });
+});
+
+describe("chosen place", () => {
+  const sofia = { name: "Sofia", lng: 23.3219, lat: 42.6977 };
+
+  it("reads place and near together", () => {
+    expect(parse("place=Sofia&near=23.3219,42.6977").place).toEqual(sofia);
+    expect(parse("place=Sofia%2C+Bulgaria&near=-0.1276,51.5072").place).toEqual({ name: "Sofia, Bulgaria", lng: -0.1276, lat: 51.5072 });
+  });
+
+  it("drops one without the other, or a bad coordinate", () => {
+    expect(parse("place=Sofia").place).toBeNull();
+    expect(parse("near=23.3219,42.6977").place).toBeNull();
+    expect(parse("place=Sofia&near=42.6977").place).toBeNull();
+    expect(parse("place=Sofia&near=190,42").place).toBeNull();
+    expect(parse("place=Sofia&near=23,95").place).toBeNull();
+    expect(parse("place=Sofia&near=abc,def").place).toBeNull();
+    expect(parse("place=%20%20&near=23,42").place).toBeNull();
+  });
+
+  it("cleans and caps the name", () => {
+    expect(parsePlaceParams("  New\u0000  York \n", "1,2")).toEqual({ name: "New York", lng: 1, lat: 2 });
+    expect(parsePlaceParams("x".repeat(300), "1,2")!.name).toHaveLength(100);
+  });
+
+  it("round-trips through the URL, readable, with five decimals", () => {
+    const qs = toQueryString(serializeHomeParams({ ...DEFAULT_URL_STATE, place: { name: "Sofia, Bulgaria", lng: 23.321868123, lat: 42.697708 } }));
+    expect(qs).toBe("place=Sofia,+Bulgaria&near=23.32187,42.69771");
+    expect(parse(qs).place).toEqual({ name: "Sofia, Bulgaria", lng: 23.32187, lat: 42.69771 });
+  });
+
+  it("keeps existing links working: no place means the same state as before", () => {
+    expect(parse("venue=abc&radius=1000&q=bar").place).toBeNull();
+    expect(toQueryString(serializeHomeParams(parse("venue=abc&radius=1000&q=bar")))).toBe("venue=abc&radius=1000&q=bar");
+  });
+
+  it("counts as an active filter and is cleared with the others", () => {
+    const state = { ...DEFAULT_URL_STATE, place: sofia };
+    expect(countActiveFilters(state)).toBe(1);
+    expect(clearedFilters(state).place).toBeNull();
   });
 });
 

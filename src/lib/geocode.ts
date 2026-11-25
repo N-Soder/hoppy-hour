@@ -22,12 +22,19 @@ import { COUNTRIES } from "./countries";
  * apply), biased towards the current search centre so nearby places rank
  * first.
  */
-export function placeSearchUrl(query: string, near?: Coords | { lng: number; lat: number } | null): string {
+export function placeSearchUrl(
+  query: string,
+  near?: Coords | { lng: number; lat: number } | null,
+  /** Type-ahead: partial-word matching and how many results to return. */
+  options: { autocomplete?: boolean; limit?: number } = {},
+): string {
   const parts = [`q=${encodeURIComponent(query.trim())}`, "scope=world"];
   if (near && Number.isFinite(near.lng) && Number.isFinite(near.lat)) {
     // Mapbox wants lng,lat; five decimals is about a metre.
     parts.push(`proximity=${near.lng.toFixed(5)},${near.lat.toFixed(5)}`);
   }
+  if (options.autocomplete) parts.push("autocomplete=true");
+  if (options.limit) parts.push(`limit=${options.limit}`);
   return `/api/geocode?${parts.join("&")}`;
 }
 

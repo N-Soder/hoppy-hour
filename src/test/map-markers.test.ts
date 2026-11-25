@@ -91,6 +91,28 @@ describe("MarkerLayer", () => {
     expect(shown()).toEqual(["a"]);
   });
 
+  it("asks for one more frame when markers are made in the map's last frame", () => {
+    // Selecting a venue re-clusters the source: new cluster ids, new markers,
+    // made while the map is otherwise idle. They wait for the next frame, so
+    // the layer must say one is needed (the map then calls triggerRepaint).
+    renderFrame([a]);
+    renderFrame([a]);
+    expect(layer.needsFrame(frame)).toBe(false);
+    renderFrame([a, b]);
+    expect(shown()).toEqual(["a"]);
+    expect(layer.needsFrame(frame)).toBe(true);
+    renderFrame([a, b]); // the repaint it asked for
+    expect(shown()).toEqual(["a", "b"]);
+    expect(layer.needsFrame(frame)).toBe(false);
+  });
+
+  it("stops asking for frames for a marker that never gets positioned", () => {
+    layer.sync([a], ++frame); // never rendered by the fake map
+    expect(layer.needsFrame(frame)).toBe(true);
+    for (let i = 0; i < 40; i++) layer.sync([a], ++frame);
+    expect(layer.needsFrame(frame)).toBe(false);
+  });
+
   it("hides a marker for the frame its coordinates change", () => {
     renderFrame([a]);
     renderFrame([a]);

@@ -44,17 +44,27 @@ export function useHomeUrlState() {
     [setParams],
   );
 
+  /**
+   * Open a venue. `patch` changes other state too (picking a venue from the
+   * search suggestions clears the search text): it is applied to the entry the
+   * venue opens from as well, so Back or closing returns to the patched state
+   * rather than the one before it.
+   */
   const openVenue = useCallback(
-    (id: string) => {
+    (id: string, patch?: Partial<HomeUrlState>) => {
+      const swapping = isVenueEntry(locationStateRef.current) || !!params.get("venue");
+      let base = params;
+      if (patch && !swapping) {
+        base = serializeHomeParams({ ...parseHomeParams(params), ...patch }, params);
+        setParams(toQueryString(base), { replace: true, state: locationStateRef.current });
+      }
+      const next = serializeHomeParams({ ...parseHomeParams(base), ...patch, venue: id }, base);
       setParams(
-        (prev) => {
-          const cur = parseHomeParams(prev);
-          return toQueryString(serializeHomeParams({ ...cur, venue: id }, prev));
-        },
-        isVenueEntry(locationStateRef.current) || params.get("venue")
+        toQueryString(next),
+        swapping
           ? // Already showing a venue: swap it, so one Back still closes.
             { replace: true, state: locationStateRef.current }
-          : { replace: false, state: { venueOverlay: true, base: withoutVenue(params) } satisfies VenueEntryState },
+          : { replace: false, state: { venueOverlay: true, base: withoutVenue(base) } satisfies VenueEntryState },
       );
     },
     [setParams, params],

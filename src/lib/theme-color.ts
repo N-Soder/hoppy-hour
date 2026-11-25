@@ -1,28 +1,52 @@
 // The browser chrome colour (Android status bar, installed app title bar,
-// Safari's tab bar) follows the app header, which is --card in index.css.
+// Safari's status bar strip) follows the app header, which is --card in
+// index.css.
 //
 // index.html ships two <meta name="theme-color"> tags with media queries, so
-// the colour is right for the system theme before any JavaScript runs; its
-// inline theme script and ThemeColorSync (App.tsx) override both when the user
-// has picked a theme in the app that differs from the system's.
+// the colour is right for the system theme before any JavaScript runs. When
+// the user picks a theme in the app, its inline theme script and
+// ThemeColorSync (App.tsx) swap them for one meta without a media query.
+//
+// The metas are replaced, never edited in place. Editing the `content` of the
+// media-scoped metas was not picked up by Safari after a live theme switch
+// (the strip behind the status bar kept the old colour until a reload, while a
+// fresh load was right). A newly inserted theme-color meta is always
+// re-evaluated, and with a single unscoped meta there is no media match left
+// for the browser to resolve against the system setting.
 
 export const THEME_COLORS = { light: "#ffffff", dark: "#221b16" } as const;
 
 export type ThemeChoice = "light" | "dark" | "system" | undefined;
 
-/** The colour each theme-color meta should carry for a theme choice. */
-export function themeColorContents(choice: ThemeChoice): { light: string; dark: string } {
-  if (choice === "light" || choice === "dark") {
-    const c = THEME_COLORS[choice];
-    return { light: c, dark: c };
-  }
-  return { light: THEME_COLORS.light, dark: THEME_COLORS.dark };
+export interface ThemeColorMeta {
+  content: string;
+  /** Omitted for a colour that applies whatever the system theme. */
+  media?: string;
 }
 
+export const LIGHT_MEDIA = "(prefers-color-scheme: light)";
+export const DARK_MEDIA = "(prefers-color-scheme: dark)";
+
+/** The theme-color metas the page should carry for a theme choice. */
+export function themeColorMetas(choice: ThemeChoice): ThemeColorMeta[] {
+  if (choice === "light" || choice === "dark") return [{ content: THEME_COLORS[choice] }];
+  return [
+    { media: LIGHT_MEDIA, content: THEME_COLORS.light },
+    { media: DARK_MEDIA, content: THEME_COLORS.dark },
+  ];
+}
+
+/** Replace the page's theme-color metas with fresh ones for `choice`. */
 export function applyThemeColor(choice: ThemeChoice, doc: Document = document): void {
-  const contents = themeColorContents(choice);
-  doc.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]').forEach((meta) => {
-    const scheme = (meta.getAttribute("media") ?? "").includes("dark") ? "dark" : "light";
-    meta.setAttribute("content", contents[scheme]);
-  });
+  const old = [...doc.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')];
+  const parent = old[0]?.parentNode ?? doc.head;
+  const before = old[0] ?? null;
+  for (const { content, media } of themeColorMetas(choice)) {
+    const meta = doc.createElement("meta");
+    meta.setAttribute("name", "theme-color");
+    if (media) meta.setAttribute("media", media);
+    meta.setAttribute("content", content);
+    parent.insertBefore(meta, before);
+  }
+  old.forEach((m) => m.remove());
 }
