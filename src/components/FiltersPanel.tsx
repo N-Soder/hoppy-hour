@@ -119,10 +119,19 @@ export default function FiltersPanel({
         onPickPlace={onPickPlace}
       />
 
-      {/* When and where: one row, never wraps (scrolls sideways if it must). */}
-      <div className={cn(scrollRowClass, "gap-1.5 py-0.5 -my-0.5 md:gap-2")} role="group" aria-label="When and how far">
+      {/* When and where: one row (scrolls sideways if it must). With a place
+          chip it wraps instead, so the chip and every pill stay in view on
+          phones: the chip takes the first line and the pills the next. */}
+      <div
+        className={cn(scrollRowClass, "gap-1.5 py-0.5 -my-0.5 md:gap-2", place && "flex-wrap overflow-x-visible")}
+        role="group"
+        aria-label="When and how far"
+      >
         {place && (
-          <span className="flex h-10 max-w-[15rem] flex-shrink-0 items-center gap-1.5 rounded-full border border-primary bg-primary/10 pl-3 pr-1 text-sm font-medium text-foreground">
+          <span
+            className="flex h-10 min-w-0 max-w-full flex-shrink-0 items-center gap-1.5 rounded-full border border-primary bg-primary/10 pl-3 pr-1 text-sm font-medium text-foreground md:max-w-[15rem]"
+            title={`Near ${place.name}`}
+          >
             <LocateFixed className="h-4 w-4 flex-shrink-0 text-primary" aria-hidden="true" />
             <span className="min-w-0 truncate">Near {place.name}</span>
             <button
