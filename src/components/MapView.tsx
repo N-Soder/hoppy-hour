@@ -15,11 +15,12 @@ import {
   VENUE_SOURCE_ID,
   clusterLabel,
   clusterText,
+  markerItems,
   pinLabel,
   venuesToFeatureCollection,
 } from "@/lib/map-clusters";
 import { MapMessage } from "@/components/MapMessage";
-import { MarkerLayer, createMarkerButton, type LngLatTuple, type MarkerItem } from "@/lib/map-markers";
+import { MarkerLayer, createMarkerButton } from "@/lib/map-markers";
 
 /** Mapbox error events carry the failed request's HTTP status when there is one. */
 type MapErrorEvent = { error?: { status?: number; message?: string }; sourceId?: string };
@@ -196,36 +197,20 @@ export default function MapView({
     const pins = pinsRef.current;
     const clusters = clustersRef.current;
     if (!map || !pins || !clusters || !map.getSource(VENUE_SOURCE_ID) || !map.isSourceLoaded(VENUE_SOURCE_ID)) return;
-    const pinItems: MarkerItem<string>[] = [];
-    const clusterItems: MarkerItem<number>[] = [];
-    const clusterCounts = new Map<number, { count: number; live: number }>();
-    for (const f of map.querySourceFeatures(VENUE_SOURCE_ID)) {
-      const p = f.properties as Record<string, unknown> | null;
-      if (!p || f.geometry.type !== "Point") continue;
-      if (p.cluster) {
-        const id = p.cluster_id as number;
-        if (clusterCounts.has(id)) continue;
-        clusterCounts.set(id, { count: p.point_count as number, live: (p.live as number) ?? 0 });
-        clusterItems.push({ key: id, lngLat: f.geometry.coordinates as LngLatTuple });
-      } else {
-        const venue = venueById.current.get(p.id as string);
-        // A venue's pin sits at its own coordinates, not the tile-rounded ones.
-        if (venue) pinItems.push({ key: venue.id, lngLat: [venue.lng, venue.lat] });
-      }
-    }
-    // The selected venue is kept out of the clustered source: always its own pin.
-    const sel = latest.current.selectedVenueId;
-    const selVenue = sel ? venueById.current.get(sel) : undefined;
-    if (selVenue) pinItems.push({ key: selVenue.id, lngLat: [selVenue.lng, selVenue.lat] });
+    // Clusters stay while a venue is selected; the selected venue is its own pin.
+    const items = markerItems(map.querySourceFeatures(VENUE_SOURCE_ID), venueById.current, latest.current.selectedVenueId);
     const frame = frameRef.current;
-    for (const { el } of pins.sync(pinItems, frame)) {
+    for (const { el } of pins.sync(items.pins, frame)) {
       const venue = venueById.current.get(el.dataset.venuePin!);
       if (venue) stylePin(el, venue);
     }
-    for (const { el, key } of clusters.sync(clusterItems, frame)) {
-      const c = clusterCounts.get(key)!;
+    for (const { el, key } of clusters.sync(items.clusters, frame)) {
+      const c = items.clusterCounts.get(key)!;
       styleCluster(el, c.count, c.live);
     }
+    // A marker made in the map's last frame shows from the next one: make
+    // sure there is a next one even when the map is idle (see lib/map-markers).
+    if (pins.needsFrame(frame) || clusters.needsFrame(frame)) map.triggerRepaint();
   }, [stylePin, styleCluster]);
 
   const sourceData = useCallback(

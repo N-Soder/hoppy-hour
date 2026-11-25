@@ -16,7 +16,14 @@
 //    one at the earliest, once Mapbox has written its position;
 //  - its position is only set again when its coordinates change;
 //  - nothing on the positioned element animates (its visuals live on an inner
-//    element), so it can never ease towards its position.
+//    element), so it can never ease towards its position;
+//  - a marker waiting for "the next frame" must get one: when the map is idle
+//    Mapbox renders nothing more, so the caller asks for a repaint while
+//    `needsFrame` says a wanted marker is still waiting. Without that, markers
+//    created in the map's last frame stayed hidden until the map next moved:
+//    selecting a venue re-clusters the source (it leaves the selected venue
+//    out), every cluster gets a new id and so a new marker, and all of them
+//    vanished until the selection was cleared.
 
 export type LngLatTuple = [number, number];
 
@@ -52,6 +59,9 @@ export function isPositioned(el: HTMLElement): boolean {
  * rounded to the tile grid, so they wobble that much between tiles.
  */
 const SAME_PLACE = 1e-5;
+
+/** Frames a new or moved marker may wait to be positioned before we stop asking for more. */
+const MAX_WAIT_FRAMES = 30;
 
 function setShown(el: HTMLElement, shown: boolean) {
   const value = shown ? "" : "hidden";
@@ -99,6 +109,19 @@ export class MarkerLayer<K, M extends MarkerLike> {
       setShown(entry.el, entry.wanted && frame > entry.placedAt && isPositioned(entry.el));
     }
     return wanted;
+  }
+
+  /**
+   * A wanted marker is still hidden waiting for a later frame (see the rules
+   * above): the caller must make the map render one. Only recent placements
+   * count, so a marker that can never be positioned does not make the map
+   * repaint for ever.
+   */
+  needsFrame(frame: number): boolean {
+    for (const entry of this.entries.values()) {
+      if (entry.wanted && entry.el.style.visibility === "hidden" && frame - entry.placedAt < MAX_WAIT_FRAMES) return true;
+    }
+    return false;
   }
 
   /** Markers attached but not shown. */

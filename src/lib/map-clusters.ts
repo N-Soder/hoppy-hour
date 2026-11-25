@@ -44,6 +44,53 @@ export function venuesToFeatureCollection(
   };
 }
 
+type LngLat = [number, number];
+
+/** A feature as querySourceFeatures returns it (only the parts used here). */
+export interface SourceFeatureLike {
+  geometry: { type: string; coordinates?: unknown };
+  properties: Record<string, unknown> | null;
+}
+
+export interface MarkerItems {
+  pins: { key: string; lngLat: LngLat }[];
+  clusters: { key: number; lngLat: LngLat }[];
+  clusterCounts: Map<number, { count: number; live: number }>;
+}
+
+/**
+ * The pins and cluster bubbles to show for what the clustered source reports.
+ * Every cluster stays while a venue is selected; the selected venue (kept out
+ * of the source by venuesToFeatureCollection) is added as its own pin, last,
+ * so it is drawn whether or not its neighbours are clustered.
+ */
+export function markerItems(
+  features: Iterable<SourceFeatureLike>,
+  venueById: Map<string, VenuePoint>,
+  selectedId: string | null,
+): MarkerItems {
+  const pins: MarkerItems["pins"] = [];
+  const clusters: MarkerItems["clusters"] = [];
+  const clusterCounts: MarkerItems["clusterCounts"] = new Map();
+  for (const f of features) {
+    const p = f.properties;
+    if (!p || f.geometry.type !== "Point") continue;
+    if (p.cluster) {
+      const id = p.cluster_id as number;
+      if (clusterCounts.has(id)) continue; // the same cluster in two tiles
+      clusterCounts.set(id, { count: p.point_count as number, live: (p.live as number) ?? 0 });
+      clusters.push({ key: id, lngLat: f.geometry.coordinates as LngLat });
+    } else {
+      const venue = venueById.get(p.id as string);
+      // A venue's pin sits at its own coordinates, not the tile-rounded ones.
+      if (venue && venue.id !== selectedId) pins.push({ key: venue.id, lngLat: [venue.lng, venue.lat] });
+    }
+  }
+  const sel = selectedId ? venueById.get(selectedId) : undefined;
+  if (sel) pins.push({ key: sel.id, lngLat: [sel.lng, sel.lat] });
+  return { pins, clusters, clusterCounts };
+}
+
 /** Mapbox clusterProperties: count the live venues inside each cluster. */
 export const CLUSTER_PROPERTIES = { live: ["+", ["get", "live"]] } as const;
 
