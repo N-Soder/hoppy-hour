@@ -65,7 +65,10 @@ export function applyThemeColor(choice: ThemeChoice, doc: Document = document): 
 // the class matches; it waits more frames if it does not yet.
 
 export const STATUS_BAR_TINT_ATTR = "data-status-bar-tint";
-const TINT_CLASS = "pointer-events-none fixed inset-x-0 top-0 z-[60] hidden bg-card coarse:block";
+// transition-none: with "reduce motion" on, index.css gives every element a
+// near-zero transition (property `all`), so the strip's colour would ease
+// rather than switch, and could be sampled part-way.
+const TINT_CLASS = "pointer-events-none fixed inset-x-0 top-0 z-[60] hidden bg-card transition-none coarse:block";
 /** Frames to wait for the theme class before replacing the strip anyway. */
 const MAX_TINT_WAIT_FRAMES = 10;
 
