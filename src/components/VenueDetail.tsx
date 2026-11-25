@@ -1,11 +1,11 @@
 import { forwardRef, useEffect, useState, type RefObject } from "react";
 import { Link } from "react-router-dom";
-import { ChevronDown, Clock, MapPin, Navigation, PencilLine } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { ChevronDown, MapPin, Navigation, PencilLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import LiveBadge from "@/components/LiveBadge";
 import type { VenueWithHappyHours } from "@/hooks/use-venues";
-import { DAYS_LONG } from "@/lib/constants";
+import { DAYS_LONG, DAYS_SHORT } from "@/lib/constants";
+import { splitOffers, type DealOffer } from "@/lib/deal-text";
 import { formatDistance, formatTimeRange, plural, type SelectionLabel } from "@/lib/format";
 import { dealsOnDay, formatDayRange, groupByDaySet, groupHappyHours, type GroupedHappyHour } from "@/lib/happy-hour-utils";
 import { directionsUrlForBrowser } from "@/lib/directions";
@@ -153,7 +153,7 @@ const VenueDetail = forwardRef<HTMLHeadingElement, VenueDetailProps>(function Ve
 
       {grouped.length === 0 ? (
         <section className="border-t border-border pt-4" aria-labelledby={`${headingId}-deals`}>
-          <h3 id={`${headingId}-deals`} className="mb-1 text-sm font-semibold">
+          <h3 id={`${headingId}-deals`} className={sectionLabel}>
             Deals
           </h3>
           <p className="text-sm text-muted-foreground">No deals listed</p>
@@ -161,24 +161,30 @@ const VenueDetail = forwardRef<HTMLHeadingElement, VenueDetailProps>(function Ve
       ) : (
         <>
           <section className="border-t border-border pt-4" aria-labelledby={`${headingId}-today`}>
-            <h3 id={`${headingId}-today`} className="mb-3 flex items-baseline gap-1.5 text-sm font-semibold">
+            <h3 id={`${headingId}-today`} className={cn(sectionLabel, "flex items-baseline gap-1.5")}>
               {dayName}
-              {zoneNote && <span className="text-xs font-normal text-muted-foreground">· times are {zoneNote}</span>}
+              {zoneNote && <span className="normal-case tracking-normal font-normal">· times are {zoneNote}</span>}
             </h3>
             {today.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No deals {selectedIsToday ? "today" : `on ${DAYS_LONG[selectedDay]}`}
               </p>
             ) : (
-              <ul className="space-y-3 border-l-2 border-primary pl-3">
+              <ul className="space-y-4">
                 {today.map((deal) => (
-                  <DealItem
-                    key={deal.ids[0]}
-                    deal={deal}
-                    on={deal.ids.some((id) => filteredHappyHourIds.has(id))}
-                    selection={selection}
-                    days={deal.days_of_week}
-                  />
+                  <li key={deal.ids[0]} className={dayRow}>
+                    {/* The days this deal runs, so Today lines up with the timetable below. */}
+                    <span className={cn(dayCell, "font-normal text-muted-foreground")}>
+                      {deal.days_of_week.length === 1
+                        ? `${DAYS_SHORT[deal.days_of_week[0]]} only`
+                        : formatDayRange(deal.days_of_week)}
+                    </span>
+                    <DealBody
+                      deal={deal}
+                      on={deal.ids.some((id) => filteredHappyHourIds.has(id))}
+                      selection={selection}
+                    />
+                  </li>
                 ))}
               </ul>
             )}
@@ -186,23 +192,23 @@ const VenueDetail = forwardRef<HTMLHeadingElement, VenueDetailProps>(function Ve
 
           {sections.length > 0 && (
             <section className="border-t border-border pt-4" aria-labelledby={`${headingId}-week`}>
-              <h3 id={`${headingId}-week`} className="mb-3 text-sm font-semibold">
+              <h3 id={`${headingId}-week`} className={sectionLabel}>
                 Other days
               </h3>
-              <div className="space-y-4">
+              <ul className="space-y-4">
                 {sections.map(({ days, deals }) => (
-                  <div key={days.join(",")} className="border-l-2 border-border pl-3">
-                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      {formatDayRange(days)}
-                    </h4>
+                  <li key={days.join(",")} className={dayRow}>
+                    <h4 className={dayCell}>{formatDayRange(days)}</h4>
                     <ul className="space-y-3">
                       {deals.map((deal) => (
-                        <DealItem key={deal.ids[0]} deal={deal} on={false} selection={selection} />
+                        <li key={deal.ids[0]}>
+                          <DealBody deal={deal} on={false} selection={selection} />
+                        </li>
                       ))}
                     </ul>
-                  </div>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </section>
           )}
         </>
@@ -213,41 +219,65 @@ const VenueDetail = forwardRef<HTMLHeadingElement, VenueDetailProps>(function Ve
 
 export default VenueDetail;
 
-function DealItem({
-  deal,
-  on,
-  selection,
-  days,
-}: {
-  deal: GroupedHappyHour;
-  on: boolean;
-  selection: SelectionLabel;
-  /** Show which days the deal runs on (for the Today list). */
-  days?: number[];
-}) {
+/** Small grey label over each part of the deal list. */
+const sectionLabel = "mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground";
+/** A timetable row: the days in a fixed column, the deals beside them. */
+const dayRow = "grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-3";
+const dayCell = "text-sm font-medium leading-snug";
+
+/** "beer" → "Beer". */
+const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/**
+ * One deal: its time (with the live state), then its offers one per line,
+ * each price in a narrow column beside the text, then its tags.
+ */
+function DealBody({ deal, on, selection }: { deal: GroupedHappyHour; on: boolean; selection: SelectionLabel }) {
+  const { title, offers } = splitOffers(deal.description);
   return (
-    <li>
-      <div className="flex items-center gap-1.5 text-sm font-medium">
-        <Clock className={cn("h-3.5 w-3.5 flex-shrink-0", on ? "text-primary" : "text-muted-foreground")} aria-hidden="true" />
-        <span className={cn("tabular-nums", on && "text-primary")}>{formatTimeRange(deal.start_time, deal.end_time)}</span>
-        {on && <LiveBadge selection={selection} className="ml-1" />}
-        {days && (
-          <span className="ml-auto flex-shrink-0 pl-2 text-xs font-normal text-muted-foreground">
-            {days.length === 1 ? `${DAYS_LONG[days[0]]}s only` : formatDayRange(days)}
-          </span>
-        )}
+    <div className="min-w-0 text-sm leading-snug">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <span className={cn("tabular-nums", on && "font-medium text-primary")}>
+          {formatTimeRange(deal.start_time, deal.end_time)}
+        </span>
+        {on && <LiveBadge selection={selection} />}
       </div>
-      <p className="mt-0.5 text-sm leading-snug">{deal.description}</p>
-      {deal.tags && deal.tags.length > 0 && (
-        <div className="mt-1.5 flex flex-wrap gap-1">
-          {deal.tags.map((tag) => (
-            <Badge key={tag} variant="secondary" className="text-xs capitalize">
-              {tag}
-            </Badge>
-          ))}
-        </div>
+      {title && <p className="mt-1 font-medium">{title}</p>}
+      {offers.length === 1 ? (
+        <Offer offer={offers[0]} as="p" />
+      ) : (
+        offers.length > 1 && (
+          // Prices share one column (subgrid), so their text lines up.
+          <ul className={offerGrid}>
+            {offers.map((o, i) => (
+              <Offer key={i} offer={o} as="li" />
+            ))}
+          </ul>
+        )
       )}
-    </li>
+      {deal.tags && deal.tags.length > 0 && (
+        <p className="mt-1 text-xs text-muted-foreground">{deal.tags.map(capitalise).join(" · ")}</p>
+      )}
+    </div>
+  );
+}
+
+const offerGrid = "mt-0.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5";
+
+/**
+ * One offer line: a leading price bold in its own column with the text beside
+ * it (wrapping under the text, not the price), else the text full width. Price
+ * and text stay in one element so a screen reader reads "$9 pints of …".
+ */
+function Offer({ offer, as: Tag }: { offer: DealOffer; as: "li" | "p" }) {
+  if (!offer.price) {
+    return <Tag className={cn("col-span-2 break-words", Tag === "p" && "mt-0.5")}>{offer.text}</Tag>;
+  }
+  return (
+    <Tag className={Tag === "li" ? "col-span-2 grid grid-cols-subgrid" : offerGrid}>
+      <span className="font-semibold tabular-nums">{offer.price}</span>{" "}
+      <span className="break-words">{offer.text}</span>
+    </Tag>
   );
 }
 
