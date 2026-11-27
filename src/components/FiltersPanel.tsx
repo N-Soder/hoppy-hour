@@ -5,7 +5,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
-import { CalendarIcon, Clock, LocateFixed, MapPin, RotateCcw, X } from "lucide-react";
+import { Beer, CalendarIcon, Clock, LocateFixed, MapPin, RotateCcw, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -62,6 +62,9 @@ function dayAfter(d: Date): Date {
 // Pills are 40px tall; the Button primitive's touch-target grows the hit area
 // to 44px on touch screens.
 const triggerClass = "h-10 flex-shrink-0 gap-1.5 rounded-full bg-card px-2.5 md:px-3.5";
+// Active look for a pill whose filter is set (same as a selected Chip).
+const activePillClass =
+  "border-primary bg-primary text-primary-foreground hover:bg-primary-hover hover:border-primary-hover hover:text-primary-foreground";
 // Rows that scroll sideways on phones: bleed to the screen edges, keep room
 // above and below for the 44px hit areas (overflow-x clips them otherwise).
 const scrollRowClass =
@@ -105,6 +108,14 @@ export default function FiltersPanel({
         : [...selectedTags, tag]
     );
   };
+
+  // Phone deal-type pill label: "Any", "Beer", or "Beer +2" (first in VALID_TAGS order).
+  const activeTags = TAG_OPTIONS.filter((t) => selectedTags.includes(t));
+  const tagLabel =
+    activeTags.length === 0
+      ? "Any"
+      : `${activeTags[0].charAt(0).toUpperCase()}${activeTags[0].slice(1)}${activeTags.length > 1 ? ` +${activeTags.length - 1}` : ""}`;
+
 
   return (
     <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
@@ -227,6 +238,46 @@ export default function FiltersPanel({
           </PopoverContent>
         </Popover>
 
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn(triggerClass, "md:hidden", activeTags.length > 0 && activePillClass)}
+              aria-label={`Deal type: ${activeTags.length ? activeTags.join(", ") : "any"}`}
+            >
+              <Beer className="h-4 w-4" aria-hidden="true" />
+              {tagLabel}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-3" align="start">
+            <div className="flex flex-wrap gap-2 max-w-[260px]" role="group" aria-label="Deal type">
+              {TAG_OPTIONS.map((tag) => (
+                <Chip
+                  key={tag}
+                  size="sm"
+                  selected={selectedTags.includes(tag)}
+                  className="capitalize"
+                  onClick={() => toggleTag(tag)}
+                >
+                  {tag}
+                </Chip>
+              ))}
+              {activeTags.length > 0 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2 text-xs text-muted-foreground"
+                  onClick={() => onTagsChange([])}
+                >
+                  Clear
+                </Button>
+              )}
+            </div>
+          </PopoverContent>
+        </Popover>
+
         {!isNow && (
           <Button
             variant="ghost"
@@ -241,8 +292,9 @@ export default function FiltersPanel({
         )}
       </div>
 
-      {/* Deal types: one row on phones, scrolling sideways. */}
-      <div className={cn(scrollRowClass, "gap-1.5 py-1.5 -my-1.5 md:flex-wrap")} role="group" aria-label="Deal type">
+      {/* Deal types: on phones they live in a pill in the row above (a popover
+          keeps the filter bar to two rows); md and up shows them inline. */}
+      <div className={cn(scrollRowClass, "hidden gap-1.5 py-1.5 -my-1.5 md:flex md:flex-wrap")} role="group" aria-label="Deal type">
         {TAG_OPTIONS.map((tag) => (
           <Chip
             key={tag}
